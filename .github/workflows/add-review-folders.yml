@@ -1,0 +1,43 @@
+name: Add review folders
+
+on:
+  push:
+    paths:
+      - '.github/workflows/add-review-folders.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  organize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add proposed and approved folders
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t dirs < <(
+            find . -type d \
+              ! -path './.git*' \
+              ! -path './.github*' \
+              ! -path '*/proposed' \
+              ! -path '*/proposed/*' \
+              ! -path '*/approved' \
+              ! -path '*/approved/*' \
+              -print
+          )
+
+          for dir in "${dirs[@]}"; do
+            mkdir -p "$dir/proposed" "$dir/approved"
+            touch "$dir/proposed/.gitkeep" "$dir/approved/.gitkeep"
+          done
+
+          rm -f .github/workflows/add-review-folders.yml
+
+          git config user.name 'MOM repo organizer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add proposed and approved review folders'
+          git push
