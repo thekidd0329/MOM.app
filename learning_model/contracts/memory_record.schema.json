@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mom://contracts/memory_record.schema.json",
+  "title": "MOM Memory Record",
+  "type": "object",
+  "required": ["id", "user_id", "created_at", "memory_type", "content", "truth_state", "provenance"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "user_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "memory_type": {
+      "type": "string",
+      "enum": ["fact", "preference", "routine", "relationship", "place", "object", "goal", "boundary", "vocabulary", "episode"]
+    },
+    "content": {},
+    "truth_state": {"type": "string", "enum": ["confirmed", "stale", "superseded"]},
+    "importance": {"type": "number", "minimum": 0, "maximum": 1},
+    "retrieval_tags": {"type": "array", "items": {"type": "string"}},
+    "provenance": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "last_accessed_at": {"type": ["string", "null"], "format": "date-time"},
+    "last_verified_at": {"type": ["string", "null"], "format": "date-time"},
+    "valid_until": {"type": ["string", "null"], "format": "date-time"}
+  },
+  "additionalProperties": false
+}

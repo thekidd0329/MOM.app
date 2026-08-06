@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mom://contracts/correction.schema.json",
+  "title": "MOM Correction",
+  "type": "object",
+  "required": ["id", "user_id", "corrected_at", "target_fact_id", "replacement_value", "source", "reason"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "user_id": {"type": "string", "minLength": 1},
+    "corrected_at": {"type": "string", "format": "date-time"},
+    "target_fact_id": {"type": "string", "minLength": 1},
+    "replacement_value": {},
+    "source": {"const": "user"},
+    "reason": {"type": "string", "minLength": 1},
+    "conversation_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

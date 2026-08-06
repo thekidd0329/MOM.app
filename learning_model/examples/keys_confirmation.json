@@ -1,0 +1,37 @@
+{
+  "scenario": "Keys heard after arriving home",
+  "observation": {
+    "id": "obs_example_keys_001",
+    "user_id": "example_user",
+    "observed_at": "2026-08-06T08:00:00-07:00",
+    "source_type": "audio",
+    "source": "on_device_sound_classifier",
+    "payload": {
+      "label": "keys_on_hard_surface",
+      "location_context": "home"
+    },
+    "truth_state": "observed",
+    "confidence": 0.91,
+    "sensitivity": "normal",
+    "expires_at": null,
+    "metadata": {}
+  },
+  "candidate": {
+    "id": "candidate_example_keys_001",
+    "user_id": "example_user",
+    "created_at": "2026-08-06T08:00:01-07:00",
+    "subject": "user.keys",
+    "predicate": "current_location",
+    "value": "home_counter",
+    "source_observation_ids": ["obs_example_keys_001"],
+    "truth_state": "candidate",
+    "confidence": 0.72,
+    "confirmation_needed": true,
+    "confirmation_question": "Did you just put your keys on the counter?",
+    "memory_scope": "short_term",
+    "expires_at": null,
+    "metadata": {}
+  },
+  "on_yes": "Promote candidate to confirmed fact with user_confirmation provenance.",
+  "on_no": "Reject candidate. Do not create a confirmed key-location memory."
+}
