@@ -11,7 +11,7 @@ MomConfig config() => MomConfig(
       modelApiBase: 'https://model.example/v1',
       modelName: '',
       modelApiKey: 'test-secret',
-      useLocalLlama: false,
+      useLocalLlama: true,
       modelsDir: '/tmp',
       repoRoot: '/tmp',
       cloudChatSync: true,
@@ -21,7 +21,7 @@ MomConfig config() => MomConfig(
     );
 
 void main() {
-  test('model discovery uses OpenAI compatible models endpoint', () async {
+  test('local model discovery uses OpenAI compatible models endpoint', () async {
     final mock = MockClient((request) async {
       expect(request.url.toString(), 'https://model.example/v1/models');
       expect(request.headers['authorization'], 'Bearer test-secret');
@@ -32,7 +32,7 @@ void main() {
     client.close();
   });
 
-  test('chat sends system, knowledge, and user content', () async {
+  test('local chat sends system, knowledge, and user content', () async {
     var calls = 0;
     final mock = MockClient((request) async {
       calls++;
