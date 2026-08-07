@@ -6,9 +6,10 @@ import 'package:flutter/services.dart';
 import 'config.dart';
 
 class KnowledgeEntry {
-  const KnowledgeEntry(this.path, this.text);
+  const KnowledgeEntry(this.path, this.text, {this.live = false});
   final String path;
   final String text;
+  final bool live;
 }
 
 class KnowledgeHit {
@@ -75,10 +76,8 @@ class KnowledgeService {
         if (text.trim().isEmpty) continue;
 
         // Desktop live-repo content is authoritative over the bundled snapshot.
-        // This keeps local edits visible immediately and prevents stale bundled
-        // files with the same relative path from masking the live copy.
         _entries.removeWhere((entry) => entry.path == relative);
-        _entries.add(KnowledgeEntry(relative, text));
+        _entries.add(KnowledgeEntry(relative, text, live: true));
       } catch (_) {}
     }
   }
@@ -96,7 +95,12 @@ class KnowledgeService {
         final count = _countOccurrences(text, token);
         score += count > 6 ? 6 : count;
       }
-      if (score > 0) hits.add(KnowledgeHit(entry, score));
+      if (score > 0) {
+        // A configured desktop repository is the freshest source. Relevant live
+        // hits should not be crowded out by older bundled copies or large docs.
+        if (entry.live) score += 12;
+        hits.add(KnowledgeHit(entry, score));
+      }
     }
     hits.sort((a, b) => b.score.compareTo(a.score));
     return hits.take(limit).toList(growable: false);
