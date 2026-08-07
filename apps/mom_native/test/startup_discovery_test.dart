@@ -29,7 +29,7 @@ void main() {
     }
 
     expect(progress.answeredCount, 4);
-    expect(engine.nextNode(progress)?.id, isNot(inInclusiveRange(0, 0)));
+    expect(engine.nextNode(progress), isNotNull);
   });
 
   test('clear answers can stop early but never before minimum', () {
