@@ -21,7 +21,7 @@ MomConfig config() => MomConfig(
     );
 
 void main() {
-  test('local model discovery uses OpenAI compatible models endpoint', () async {
+  test('local model discovery uses the standard models endpoint', () async {
     final mock = MockClient((request) async {
       expect(request.url.toString(), 'https://model.example/v1/models');
       expect(request.headers['authorization'], 'Bearer test-secret');
