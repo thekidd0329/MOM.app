@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MOM</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0c10;
+      --panel: #12141a;
+      --panel-2: #181b22;
+      --text: #f5f5f2;
+      --muted: #9ca3af;
+      --line: #262a34;
+      --user: #293347;
+      --mom: #171a20;
+      --accent: #ef6c79;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .shell {
+      height: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(16px);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--accent);
+      color: #111;
+      font-weight: 900;
+      letter-spacing: -1px;
+    }
+    h1 { margin: 0; font-size: 17px; }
+    .status { color: var(--muted); font-size: 12px; }
+    #messages {
+      overflow-y: auto;
+      padding: 28px 18px 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .welcome {
+      margin: auto;
+      max-width: 540px;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.55;
+      padding: 30px;
+    }
+    .welcome strong { color: var(--text); }
+    .row { display: flex; }
+    .row.user { justify-content: flex-end; }
+    .bubble {
+      max-width: min(78%, 680px);
+      padding: 12px 14px;
+      border-radius: 18px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      border: 1px solid var(--line);
+    }
+    .row.user .bubble {
+      background: var(--user);
+      border-bottom-right-radius: 6px;
+    }
+    .row.assistant .bubble {
+      background: var(--mom);
+      border-bottom-left-radius: 6px;
+    }
+    .typing { color: var(--muted); font-style: italic; }
+    .composer-wrap {
+      position: sticky;
+      bottom: 0;
+      padding: 12px 18px 18px;
+      background: linear-gradient(180deg, transparent, var(--bg) 22%);
+    }
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 8px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    }
+    textarea {
+      width: 100%;
+      resize: none;
+      max-height: 180px;
+      min-height: 44px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      padding: 11px 12px;
+    }
+    button {
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #111;
+      font-size: 20px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+    button:disabled { opacity: .45; cursor: default; }
+    .footnote {
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 7px;
+    }
+    @media (max-width: 620px) {
+      .bubble { max-width: 88%; }
+      #messages { padding-inline: 12px; }
+      .composer-wrap { padding-inline: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand">
+        <div class="mark">M</div>
+        <div>
+          <h1>MOM</h1>
+          <div class="status" id="status">text interface</div>
+        </div>
+      </div>
+      <div class="status" id="model"></div>
+    </header>
+
+    <section id="messages">
+      <div class="welcome" id="welcome">
+        <strong>MOM is awake.</strong><br />
+        This is the first text surface: one conversation, one persistent identity, one model adapter.
+      </div>
+    </section>
+
+    <div class="composer-wrap">
+      <form class="composer" id="composer">
+        <textarea id="input" rows="1" autofocus placeholder="Text MOM…"></textarea>
+        <button id="send" type="submit" aria-label="Send">↑</button>
+      </form>
+      <div class="footnote">Enter to send · Shift+Enter for a new line</div>
+    </div>
+  </main>
+
+  <script>
+    const messages = document.getElementById('messages');
+    const welcome = document.getElementById('welcome');
+    const form = document.getElementById('composer');
+    const input = document.getElementById('input');
+    const send = document.getElementById('send');
+    const status = document.getElementById('status');
+    const model = document.getElementById('model');
+
+    let sessionId = localStorage.getItem('mom_session_id') || crypto.randomUUID();
+    localStorage.setItem('mom_session_id', sessionId);
+    let busy = false;
+
+    function addMessage(role, text, extraClass='') {
+      if (welcome) welcome.remove();
+      const row = document.createElement('div');
+      row.className = `row ${role}`;
+      const bubble = document.createElement('div');
+      bubble.className = `bubble ${extraClass}`;
+      bubble.textContent = text;
+      row.appendChild(bubble);
+      messages.appendChild(row);
+      messages.scrollTop = messages.scrollHeight;
+      return row;
+    }
+
+    function resizeInput() {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 180) + 'px';
+    }
+
+    input.addEventListener('input', resizeInput);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text || busy) return;
+
+      busy = true;
+      send.disabled = true;
+      input.value = '';
+      resizeInput();
+      addMessage('user', text);
+      const typing = addMessage('assistant', 'MOM is thinking…', 'typing');
+      status.textContent = 'thinking';
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({session_id: sessionId, message: text})
+        });
+        const data = await response.json();
+        typing.remove();
+        if (!response.ok) throw new Error(data.error || 'Request failed');
+        addMessage('assistant', data.message);
+        model.textContent = data.model || '';
+        status.textContent = 'online';
+      } catch (error) {
+        typing.remove();
+        addMessage('assistant', `I couldn't reach my brain: ${error.message}`);
+        status.textContent = 'model unavailable';
+      } finally {
+        busy = false;
+        send.disabled = false;
+        input.focus();
+      }
+    });
+
+    fetch('/health')
+      .then(r => r.json())
+      .then(data => {
+        status.textContent = data.ok ? 'online' : 'offline';
+      })
+      .catch(() => status.textContent = 'offline');
+  </script>
+</body>
+</html>
