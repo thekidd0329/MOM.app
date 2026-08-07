@@ -36,6 +36,17 @@ jobs:
         working-directory: apps/mom_native
         run: flutter test
 
+      - name: Check secret bridge availability
+        env:
+          GH_HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os
+          print('github_hf_token_configured=' + str(bool(os.environ.get('GH_HF_TOKEN'))).lower())
+          print('github_supabase_access_token_configured=' + str(bool(os.environ.get('GH_SUPABASE_ACCESS_TOKEN'))).lower())
+          PY
+
       - name: MOM brain server smoke test
         env:
           MOM_BRAIN_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain
