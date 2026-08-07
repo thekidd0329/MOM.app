@@ -14,6 +14,7 @@ class LlamaStatus {
 
 class LlamaManager {
   Process? _process;
+  bool _exited = false;
 
   Future<LlamaStatus> ensureRunning(MomConfig config) async {
     if (!Platform.isLinux || !config.useLocalLlama) {
@@ -42,6 +43,7 @@ class LlamaManager {
     }
 
     try {
+      _exited = false;
       _process = await Process.start(
         executable,
         [
@@ -54,8 +56,9 @@ class LlamaManager {
         mode: ProcessStartMode.normal,
       );
       // Drain pipes so a verbose server cannot block itself.
-      _process!.stdout.transform(const SystemEncoding().decoder).listen((_) {});
-      _process!.stderr.transform(const SystemEncoding().decoder).listen((_) {});
+      _process!.stdout.listen((_) {});
+      _process!.stderr.listen((_) {});
+      unawaited(_process!.exitCode.then((_) => _exited = true));
     } catch (error) {
       return LlamaStatus(running: false, message: 'Could not start llama.cpp: $error');
     }
@@ -64,9 +67,7 @@ class LlamaManager {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       final status = await probe(config.modelApiBase);
       if (status.running) return status;
-      if (_process != null && (await _process!.exitCode.timeout(const Duration(milliseconds: 1), onTimeout: () => -1)) != -1) {
-        break;
-      }
+      if (_exited) break;
     }
     return const LlamaStatus(running: false, message: 'llama.cpp did not become ready within 45 seconds.');
   }
@@ -107,5 +108,6 @@ class LlamaManager {
   void stopIfStartedByMom() {
     _process?.kill(ProcessSignal.sigterm);
     _process = null;
+    _exited = true;
   }
 }
