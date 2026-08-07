@@ -1,0 +1,1 @@
+# Intentionally empty. The MOM text MVP uses only the Python standard library.
