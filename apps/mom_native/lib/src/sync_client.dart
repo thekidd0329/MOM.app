@@ -6,6 +6,13 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+class BrainReply {
+  const BrainReply({required this.text, required this.model});
+
+  final String text;
+  final String model;
+}
+
 class MomSyncClient {
   MomSyncClient({
     required this.syncUrl,
@@ -22,10 +29,22 @@ class MomSyncClient {
   static const _tokenKey = 'mom_installation_token';
   static const _deviceKey = 'mom_device_id';
 
+  String get brainUrl {
+    final uri = Uri.parse(syncUrl);
+    final segments = uri.pathSegments.toList();
+    if (segments.isNotEmpty && segments.last == 'mom-sync') {
+      segments[segments.length - 1] = 'mom-brain';
+    } else if (segments.isEmpty || segments.last != 'mom-brain') {
+      segments.add('mom-brain');
+    }
+    return uri.replace(pathSegments: segments).toString();
+  }
+
   Future<Map<String, dynamic>> _post(
     Map<String, dynamic> payload, {
     bool authenticated = false,
     Duration timeout = const Duration(seconds: 20),
+    String? endpoint,
   }) async {
     final headers = <String, String>{'content-type': 'application/json'};
     if (authenticated) {
@@ -37,8 +56,9 @@ class MomSyncClient {
       headers['x-mom-installation'] = installation;
       headers['x-mom-token'] = token;
     }
+    final target = Uri.parse(endpoint ?? syncUrl);
     final response = await _http
-        .post(Uri.parse(syncUrl), headers: headers, body: jsonEncode(payload))
+        .post(target, headers: headers, body: jsonEncode(payload))
         .timeout(timeout);
     Map<String, dynamic> decoded = {};
     if (response.body.isNotEmpty) {
@@ -47,8 +67,8 @@ class MomSyncClient {
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw HttpException(
-        'MOM sync HTTP ${response.statusCode}: ${decoded['error'] ?? response.body}',
-        uri: Uri.parse(syncUrl),
+        'MOM cloud HTTP ${response.statusCode}: ${decoded['error'] ?? response.body}',
+        uri: target,
       );
     }
     return decoded;
@@ -58,6 +78,15 @@ class MomSyncClient {
     try {
       final result = await _post({'action': 'health'});
       return result['ok'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> brainHealth() async {
+    try {
+      final result = await _post({'action': 'health'}, endpoint: brainUrl);
+      return result['ok'] == true && result['configured'] == true;
     } catch (_) {
       return false;
     }
@@ -106,6 +135,52 @@ class MomSyncClient {
   Future<bool> registered() async {
     return await _secure.read(key: _installationKey) != null &&
         await _secure.read(key: _tokenKey) != null;
+  }
+
+  Future<List<String>> brainModels() async {
+    await ensureRegistered();
+    final result = await _post(
+      {'action': 'models'},
+      authenticated: true,
+      endpoint: brainUrl,
+      timeout: const Duration(seconds: 30),
+    );
+    final raw = result['models'];
+    if (raw is! List) return const [];
+    return raw.whereType<String>().where((value) => value.trim().isNotEmpty).toList(growable: false);
+  }
+
+  Future<BrainReply> brainChat({
+    required String systemPrompt,
+    required List<Map<String, String>> history,
+    required String userText,
+    String knowledgeContext = '',
+    String model = '',
+    double temperature = 0.72,
+    int maxHistory = 30,
+  }) async {
+    await ensureRegistered();
+    final result = await _post(
+      {
+        'action': 'chat',
+        'system_prompt': systemPrompt,
+        'history': history,
+        'user_text': userText,
+        'knowledge_context': knowledgeContext,
+        'model': model,
+        'temperature': temperature,
+        'max_history': maxHistory,
+      },
+      authenticated: true,
+      endpoint: brainUrl,
+      timeout: const Duration(minutes: 5),
+    );
+    final text = result['text'];
+    final resolvedModel = result['model'];
+    if (text is! String || text.trim().isEmpty || resolvedModel is! String) {
+      throw const FormatException('MOM brain returned an unexpected response.');
+    }
+    return BrainReply(text: text.trim(), model: resolvedModel.trim());
   }
 
   Future<void> syncChat({
