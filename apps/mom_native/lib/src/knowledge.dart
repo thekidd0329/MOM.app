@@ -62,19 +62,23 @@ class KnowledgeService {
   Future<void> _loadLiveRepo(String rootPath) async {
     final root = Directory(rootPath);
     if (!await root.exists()) return;
-    final bundledPaths = _entries.map((e) => e.path).toSet();
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
       final relative = entity.path.substring(root.path.length).replaceFirst(RegExp(r'^[/\\]+'), '');
       final parts = relative.split(RegExp(r'[/\\]+'));
       if (parts.any(excludedDirectoryNames.contains)) continue;
-      if (bundledPaths.contains(relative)) continue;
       final lower = relative.toLowerCase();
       if (!allowedExtensions.any(lower.endsWith)) continue;
       try {
         if (await entity.length() > 160000) continue;
         final text = await entity.readAsString();
-        if (text.trim().isNotEmpty) _entries.add(KnowledgeEntry(relative, text));
+        if (text.trim().isEmpty) continue;
+
+        // Desktop live-repo content is authoritative over the bundled snapshot.
+        // This keeps local edits visible immediately and prevents stale bundled
+        // files with the same relative path from masking the live copy.
+        _entries.removeWhere((entry) => entry.path == relative);
+        _entries.add(KnowledgeEntry(relative, text));
       } catch (_) {}
     }
   }
