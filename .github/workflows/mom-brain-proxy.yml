@@ -36,24 +36,41 @@ jobs:
         working-directory: apps/mom_native
         run: flutter test
 
-      - name: Check secret bridge availability
-        env:
-          GH_HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          GH_SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: |
-          python3 - <<'PY'
-          import os
-          print('github_hf_token_configured=' + str(bool(os.environ.get('GH_HF_TOKEN'))).lower())
-          print('github_supabase_access_token_configured=' + str(bool(os.environ.get('GH_SUPABASE_ACCESS_TOKEN'))).lower())
-          PY
-
       - name: MOM brain server smoke test
         env:
+          MOM_SYNC_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync
           MOM_BRAIN_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain
-          MOM_TEST_INSTALLATION: 11111111-1111-4111-8111-111111111111
-          MOM_TEST_TOKEN: mom-ci-temporary-token-server-brain-proxy-20260807-DO-NOT-USE
         run: |
           set -euo pipefail
+
+          device_id="mom-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-proxy"
+          registration="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -d "{\"action\":\"register\",\"device_id\":\"$device_id\",\"platform\":\"github-actions\",\"app_version\":\"ci\",\"metadata\":{\"temporary\":true}}" \
+            "$MOM_SYNC_URL")"
+
+          installation="$(REGISTRATION="$registration" python3 - <<'PY'
+          import json, os
+          data = json.loads(os.environ['REGISTRATION'])
+          print(data['installation_id'])
+          PY
+          )"
+          token="$(REGISTRATION="$registration" python3 - <<'PY'
+          import json, os
+          data = json.loads(os.environ['REGISTRATION'])
+          print(data['token'])
+          PY
+          )"
+
+          cleanup() {
+            curl -sS -X POST \
+              -H 'content-type: application/json' \
+              -H "x-mom-installation: $installation" \
+              -H "x-mom-token: $token" \
+              -d '{"action":"unregister_test"}' \
+              "$MOM_BRAIN_URL" >/dev/null || true
+          }
+          trap cleanup EXIT
 
           health="$(curl --fail-with-body -sS -X POST \
             -H 'content-type: application/json' \
@@ -64,13 +81,13 @@ jobs:
           import json, os
           data = json.loads(os.environ['HEALTH'])
           assert data.get('ok') is True, data
-          assert data.get('configured') is True, 'HF secret is not configured in Supabase'
+          assert data.get('configured') is True, 'HF_TOKEN is not configured in Supabase Edge Function secrets'
           PY
 
           models="$(curl --fail-with-body -sS -X POST \
             -H 'content-type: application/json' \
-            -H "x-mom-installation: $MOM_TEST_INSTALLATION" \
-            -H "x-mom-token: $MOM_TEST_TOKEN" \
+            -H "x-mom-installation: $installation" \
+            -H "x-mom-token: $token" \
             -d '{"action":"models"}' \
             "$MOM_BRAIN_URL")"
           echo "$models"
@@ -100,8 +117,8 @@ jobs:
 
           chat="$(curl --fail-with-body -sS -X POST \
             -H 'content-type: application/json' \
-            -H "x-mom-installation: $MOM_TEST_INSTALLATION" \
-            -H "x-mom-token: $MOM_TEST_TOKEN" \
+            -H "x-mom-installation: $installation" \
+            -H "x-mom-token: $token" \
             -d "$payload" \
             "$MOM_BRAIN_URL")"
           echo "$chat"
