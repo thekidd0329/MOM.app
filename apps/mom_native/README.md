@@ -20,7 +20,7 @@ Linux additionally reads the configured live repository folder at runtime. Andro
 The native clients use two server boundaries:
 
 - `mom-sync` registers installations and brokers chat history, runtime events, history retrieval, and candidate-memory writes.
-- `mom-brain` brokers hosted LLM inference and owns the hosted-provider credential server-side.
+- `mom-brain` brokers hosted LLM inference and owns the hosted-provider credential server-side. Production can source that credential from Supabase server-side storage without exposing it to the client.
 
 First launch registers a random device ID and receives a device token stored in platform secure storage. Both server functions validate that installation token before protected operations. Hosted provider credentials never need to be present on the device. Older MOM builds that stored a hosted-model key have that legacy key deleted on configuration load.
 
