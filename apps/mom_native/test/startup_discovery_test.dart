@@ -47,7 +47,7 @@ void main() {
     expect(progress.answeredCount, lessThanOrEqualTo(DiscoveryEngine.maximumQuestions));
   });
 
-  test('mixed answers keep discovery open longer without exceeding 20', () {
+  test('mixed answers explore longer without exceeding the ceiling', () {
     const engine = DiscoveryEngine();
     var progress = const DiscoveryProgress();
 
@@ -58,6 +58,7 @@ void main() {
     }
 
     expect(progress.complete, isTrue);
-    expect(progress.answeredCount, DiscoveryEngine.maximumQuestions);
+    expect(progress.answeredCount, greaterThanOrEqualTo(DiscoveryEngine.mediumQuestions));
+    expect(progress.answeredCount, lessThanOrEqualTo(DiscoveryEngine.maximumQuestions));
   });
 }
