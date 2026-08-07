@@ -1,0 +1,175 @@
+name: MOM Native
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mom_native/**"
+      - "core_llm/**"
+      - "learning_model/**"
+      - "docs/**"
+      - "tools/build_mom_knowledge.py"
+      - ".github/workflows/mom-native.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests and variable validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build repository knowledge bundle
+        run: python3 tools/build_mom_knowledge.py
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze
+      - name: Unit tests
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Supabase MOM sync health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"action":"health"}' https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync)"
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+
+  linux:
+    name: Linux Mint package
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev
+      - name: Build repository knowledge bundle
+        run: python3 tools/build_mom_knowledge.py
+      - name: Generate native Linux shell
+        run: |
+          flutter config --enable-linux-desktop
+          flutter create --platforms=linux --org app.mom --project-name mom_native "$RUNNER_TEMP/mom_linux"
+          rm -rf "$RUNNER_TEMP/mom_linux/lib" "$RUNNER_TEMP/mom_linux/test"
+          cp -a apps/mom_native/lib "$RUNNER_TEMP/mom_linux/lib"
+          cp -a apps/mom_native/test "$RUNNER_TEMP/mom_linux/test"
+          cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_linux/pubspec.yaml"
+          rm -rf "$RUNNER_TEMP/mom_linux/assets"
+          cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_linux/assets"
+      - name: Build Linux release
+        working-directory: ${{ runner.temp }}/mom_linux
+        run: flutter pub get && flutter build linux --release
+      - name: Package installable deb
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/mom_deb"
+          mkdir -p "$ROOT/DEBIAN" "$ROOT/opt/mom" "$ROOT/usr/share/applications"
+          cp -a "$RUNNER_TEMP/mom_linux/build/linux/x64/release/bundle/." "$ROOT/opt/mom/"
+          cat > "$ROOT/DEBIAN/control" <<'EOF'
+          Package: mom
+          Version: 0.2.0
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: MOM
+          Depends: libgtk-3-0, libsecret-1-0
+          Description: MOM native personal intelligence client
+          EOF
+          cat > "$ROOT/usr/share/applications/mom.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=MOM
+          Comment=Personal intelligence
+          Exec=/opt/mom/mom_native
+          Terminal=false
+          Categories=Utility;
+          StartupNotify=true
+          EOF
+          dpkg-deb --build "$ROOT" "$GITHUB_WORKSPACE/mom-linux-amd64.deb"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mom-linux-amd64-deb
+          path: mom-linux-amd64.deb
+
+  android:
+    name: Android APK
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build repository knowledge bundle
+        run: python3 tools/build_mom_knowledge.py
+      - name: Generate native Android shell
+        run: |
+          flutter create --platforms=android --org app.mom --project-name mom_native "$RUNNER_TEMP/mom_android"
+          rm -rf "$RUNNER_TEMP/mom_android/lib" "$RUNNER_TEMP/mom_android/test"
+          cp -a apps/mom_native/lib "$RUNNER_TEMP/mom_android/lib"
+          cp -a apps/mom_native/test "$RUNNER_TEMP/mom_android/test"
+          cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_android/pubspec.yaml"
+          rm -rf "$RUNNER_TEMP/mom_android/assets"
+          cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          if 'android.permission.INTERNET' not in s:
+              s = s.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET" />')
+          p.write_text(s)
+          PY
+      - name: Build Android release APK
+        working-directory: ${{ runner.temp }}/mom_android
+        run: flutter pub get && flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mom-android-apk
+          path: ${{ runner.temp }}/mom_android/build/app/outputs/flutter-apk/app-release.apk
+
+  ios:
+    name: iOS compile check
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build repository knowledge bundle
+        run: python3 tools/build_mom_knowledge.py
+      - name: Generate native iOS shell
+        run: |
+          flutter create --platforms=ios --org app.mom --project-name mom_native "$RUNNER_TEMP/mom_ios"
+          rm -rf "$RUNNER_TEMP/mom_ios/lib" "$RUNNER_TEMP/mom_ios/test"
+          cp -a apps/mom_native/lib "$RUNNER_TEMP/mom_ios/lib"
+          cp -a apps/mom_native/test "$RUNNER_TEMP/mom_ios/test"
+          cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_ios/pubspec.yaml"
+          rm -rf "$RUNNER_TEMP/mom_ios/assets"
+          cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_ios/assets"
+      - name: Compile iOS without code signing
+        working-directory: ${{ runner.temp }}/mom_ios
+        run: flutter pub get && flutter build ios --release --no-codesign
+      - name: Archive unsigned iOS app
+        run: cd "$RUNNER_TEMP/mom_ios/build/ios/iphoneos" && ditto -c -k --sequesterRsrc --keepParent Runner.app "$GITHUB_WORKSPACE/mom-ios-unsigned.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mom-ios-unsigned
+          path: mom-ios-unsigned.zip
