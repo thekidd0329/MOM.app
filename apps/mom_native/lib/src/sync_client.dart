@@ -28,6 +28,7 @@ class MomSyncClient {
   static const _installationKey = 'mom_installation_id';
   static const _tokenKey = 'mom_installation_token';
   static const _deviceKey = 'mom_device_id';
+  static final Map<String, Future<void>> _registrationFlights = {};
 
   String get brainUrl {
     final uri = Uri.parse(syncUrl);
@@ -93,9 +94,29 @@ class MomSyncClient {
   }
 
   Future<void> ensureRegistered({String appVersion = '0.2.0'}) async {
-    final installation = await _secure.read(key: _installationKey);
-    final token = await _secure.read(key: _tokenKey);
-    if (installation != null && token != null) return;
+    if (await registered()) return;
+
+    final inFlight = _registrationFlights[syncUrl];
+    if (inFlight != null) {
+      await inFlight;
+      if (await registered()) return;
+    }
+
+    final registration = _register(appVersion: appVersion);
+    _registrationFlights[syncUrl] = registration;
+    try {
+      await registration;
+    } finally {
+      if (identical(_registrationFlights[syncUrl], registration)) {
+        _registrationFlights.remove(syncUrl);
+      }
+    }
+  }
+
+  Future<void> _register({required String appVersion}) async {
+    // Another caller can finish between ensureRegistered's first check and this
+    // single-flight taking ownership. Recheck before touching device identity.
+    if (await registered()) return;
 
     final prefs = await SharedPreferences.getInstance();
     var deviceId = prefs.getString(_deviceKey) ?? 'mom-${const Uuid().v4()}';
@@ -123,6 +144,8 @@ class MomSyncClient {
         return;
       } on HttpException catch (error) {
         if (attempt == 0 && error.message.contains('device_already_registered')) {
+          // This path remains useful after restored/reinstalled app state where
+          // the server knows an old device id but this install has no token.
           deviceId = 'mom-${const Uuid().v4()}';
           await prefs.setString(_deviceKey, deviceId);
           continue;
