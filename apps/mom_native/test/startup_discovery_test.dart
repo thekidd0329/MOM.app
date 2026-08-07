@@ -18,6 +18,17 @@ void main() {
     }
   });
 
+  test('all routed domains exist in the discovery bank', () {
+    final domains = discoveryBank.map((node) => node.domain).toSet();
+    for (final node in discoveryBank) {
+      for (final choice in node.choices) {
+        for (final domain in [...choice.opens, ...choice.suppresses]) {
+          expect(domains, contains(domain), reason: '${choice.id} references $domain');
+        }
+      }
+    }
+  });
+
   test('first four questions are routing gateways', () {
     const engine = DiscoveryEngine();
     var progress = const DiscoveryProgress();
@@ -30,6 +41,22 @@ void main() {
 
     expect(progress.answeredCount, 4);
     expect(engine.nextNode(progress), isNotNull);
+  });
+
+  test('a saved partial path resumes at the same next discovery', () {
+    const engine = DiscoveryEngine();
+    var progress = const DiscoveryProgress();
+
+    for (var i = 0; i < 6; i++) {
+      final node = engine.nextNode(progress);
+      expect(node, isNotNull);
+      final choice = node!.choices[i % node.choices.length];
+      progress = engine.answer(progress, node, choice);
+    }
+
+    final expected = engine.nextNode(progress)?.id;
+    final restored = DiscoveryProgress.decode(progress.encode());
+    expect(engine.nextNode(restored)?.id, expected);
   });
 
   test('clear answers can stop early but never before minimum', () {
