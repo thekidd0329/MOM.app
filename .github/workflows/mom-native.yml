@@ -11,6 +11,15 @@ on:
       - "docs/**"
       - "tools/build_mom_knowledge.py"
       - ".github/workflows/mom-native.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/mom_native/**"
+      - "core_llm/**"
+      - "learning_model/**"
+      - "docs/**"
+      - "tools/build_mom_knowledge.py"
+      - ".github/workflows/mom-native.yml"
 
 permissions:
   contents: read
