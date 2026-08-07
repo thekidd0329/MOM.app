@@ -1,0 +1,103 @@
+name: MOM Brain Proxy
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/mom-brain-proxy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build repository knowledge bundle
+        run: python3 tools/build_mom_knowledge.py
+
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze
+
+      - name: Unit tests
+        working-directory: apps/mom_native
+        run: flutter test
+
+      - name: MOM brain server smoke test
+        env:
+          MOM_BRAIN_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain
+          MOM_TEST_INSTALLATION: 11111111-1111-4111-8111-111111111111
+          MOM_TEST_TOKEN: mom-ci-temporary-token-server-brain-proxy-20260807-DO-NOT-USE
+        run: |
+          set -euo pipefail
+
+          health="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -d '{"action":"health"}' \
+            "$MOM_BRAIN_URL")"
+          echo "$health"
+          HEALTH="$health" python3 - <<'PY'
+          import json, os
+          data = json.loads(os.environ['HEALTH'])
+          assert data.get('ok') is True, data
+          assert data.get('configured') is True, 'HF secret is not configured in Supabase'
+          PY
+
+          models="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $MOM_TEST_INSTALLATION" \
+            -H "x-mom-token: $MOM_TEST_TOKEN" \
+            -d '{"action":"models"}' \
+            "$MOM_BRAIN_URL")"
+          echo "$models"
+          model="$(MODELS="$models" python3 - <<'PY'
+          import json, os
+          data = json.loads(os.environ['MODELS'])
+          models = data.get('models') or []
+          assert models, data
+          print(models[0])
+          PY
+          )"
+
+          payload="$(MODEL="$model" python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+              'action': 'chat',
+              'system_prompt': 'You are a connectivity test. Give a very short reply.',
+              'history': [],
+              'user_text': 'Reply with MOM_SERVER_OK.',
+              'knowledge_context': '',
+              'model': os.environ['MODEL'],
+              'temperature': 0,
+              'max_history': 2,
+          }))
+          PY
+          )"
+
+          chat="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $MOM_TEST_INSTALLATION" \
+            -H "x-mom-token: $MOM_TEST_TOKEN" \
+            -d "$payload" \
+            "$MOM_BRAIN_URL")"
+          echo "$chat"
+          CHAT="$chat" python3 - <<'PY'
+          import json, os
+          data = json.loads(os.environ['CHAT'])
+          assert isinstance(data.get('text'), str) and data['text'].strip(), data
+          assert isinstance(data.get('model'), str) and data['model'].strip(), data
+          print('MOM brain proxy end-to-end OK:', data['model'])
+          PY
