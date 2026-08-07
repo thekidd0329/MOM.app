@@ -1,29 +1,41 @@
 # MOM
 
-Repository scaffold and runtime experiments for MOM.
+MOM is a persistent personal intelligence with a deliberately separate cognition layer, learning contract, memory system, runtime, and product surfaces.
 
-## Runnable text MVP
+## Primary runnable product: MOM Native
 
-The first runnable MOM surface now lives at:
+`apps/mom_native/` is now the primary client target.
 
-`apps/text_mvp/`
+It is designed as one shared product across:
+- Linux Mint desktop (`.deb` package, native window, no terminal required for normal use);
+- Android (APK);
+- iOS (native iOS target; Apple signing/TestFlight is required for device distribution).
 
-It provides:
-- a minimal browser texting interface;
-- MOM's runtime identity loaded from `core_llm/mom_identity/runtime_prompt.md`;
-- an OpenAI-compatible model adapter that defaults to local llama.cpp at `http://127.0.0.1:8080/v1`;
-- local persistent conversation transcripts;
-- optional mirroring into the existing Supabase `mom_chat_sessions` and `mom_chat_messages` tables.
+The native client includes:
+- MOM's runtime identity;
+- OpenAI-compatible model routing;
+- automatic local llama.cpp startup on Linux;
+- in-app hosted-model configuration for mobile;
+- local persistent chat history;
+- Supabase conversation sync through a per-install device token;
+- product/runtime data collection with separate user controls;
+- repository knowledge/folder access through a generated mobile bundle plus live desktop folder access;
+- an in-app diagnostics suite;
+- CI tests and builds for Linux, Android, and iOS.
 
-Start with `apps/text_mvp/README.md`.
+Start with `apps/mom_native/README.md`.
+
+## Browser prototype
+
+`apps/text_mvp/` remains the earlier minimal browser prototype. It is useful for quick debugging, but MOM Native supersedes it as the product direction.
 
 ## Core separation
 
 `core_llm/` is reserved for the cognition that makes MOM uniquely MOM. Generic model plumbing, app code, platform behavior, permissions, integrations, and hardware belong elsewhere.
 
-## Current learning milestone
+## Learning contract
 
-The first implemented foundation is MOM's trustworthy user-learning contract:
+MOM's trustworthy user-learning primitive is:
 
 `observe -> interpret -> confirm when needed -> store -> retrieve -> correct -> grow`
 
