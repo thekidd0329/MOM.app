@@ -26,7 +26,13 @@ class DiscoveryEngine {
     final candidates = discoveryBank.where((node) => !answered.contains(node.id)).toList();
     if (candidates.isEmpty) return null;
 
-    candidates.sort((a, b) => _candidateScore(b, progress).compareTo(_candidateScore(a, progress)));
+    candidates.sort((a, b) {
+      final scoreCompare = _candidateScore(b, progress).compareTo(_candidateScore(a, progress));
+      if (scoreCompare != 0) return scoreCompare;
+      // Explicit lexical tie-break keeps a resumed setup deterministic across
+      // processes and platforms instead of relying on runtime hash behavior.
+      return a.id.compareTo(b.id);
+    });
     return candidates.first;
   }
 
@@ -40,8 +46,6 @@ class DiscoveryEngine {
     if (progress.answeredCount < 6) score -= node.depth * 0.8;
     if (progress.averageCertainty < 0.65) score += node.depth == 1 ? 1.0 : 0;
 
-    // Stable tie-break so a resumed setup does not reshuffle itself.
-    score += (node.id.hashCode.abs() % 1000) / 1000000.0;
     return score;
   }
 
