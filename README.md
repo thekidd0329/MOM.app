@@ -4,7 +4,7 @@ MOM is a persistent personal intelligence with a deliberately separate cognition
 
 ## Primary runnable product: MOM Native
 
-`apps/mom_native/` is now the primary client target.
+`apps/mom_native/` is the primary client target.
 
 It is designed as one shared product across:
 - Linux Mint desktop (`.deb` package, native window, no terminal required for normal use);
@@ -12,10 +12,10 @@ It is designed as one shared product across:
 - iOS (native iOS target; Apple signing/TestFlight is required for device distribution).
 
 The native client includes:
-- MOM's runtime identity;
-- OpenAI-compatible model routing;
+- MOM's own runtime identity and governing purpose;
+- provider-neutral model routing;
 - automatic local llama.cpp startup on Linux;
-- in-app hosted-model configuration for mobile;
+- server-hosted inference through the MOM Supabase brain boundary on mobile;
 - local persistent chat history;
 - Supabase conversation sync through a per-install device token;
 - product/runtime data collection with separate user controls;
@@ -32,6 +32,8 @@ Start with `apps/mom_native/README.md`.
 ## Core separation
 
 `core_llm/` is reserved for the cognition that makes MOM uniquely MOM. Generic model plumbing, app code, platform behavior, permissions, integrations, and hardware belong elsewhere.
+
+The underlying model is infrastructure, not MOM's identity or product policy. API compatibility with any provider is plumbing only and must not redefine MOM's personality, mission, or response behavior.
 
 ## Learning contract
 
