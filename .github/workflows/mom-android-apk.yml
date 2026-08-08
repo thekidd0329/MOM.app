@@ -1,0 +1,55 @@
+name: MOM Android APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/mom-android-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mom_native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android scaffold in runner
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android --org app.mom --project-name mom_native .
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mom-android-debug-${{ github.sha }}
+          path: apps/mom_native/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
