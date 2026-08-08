@@ -51,6 +51,16 @@ void main() {
       expect(result.safeForCloud, isTrue);
     });
 
+    test('generalizes a named person leading a sentence', () {
+      final result = MomPrivacyFilter.deidentify(
+        'Sarah told me I should slow down and think about it.',
+      );
+
+      expect(result.text, isNot(contains('Sarah')));
+      expect(result.text, contains('[PERSON]'));
+      expect(result.safeForCloud, isTrue);
+    });
+
     test('generalizes an exact home location', () {
       final result = MomPrivacyFilter.deidentify(
         'I live in Tacoma and I am trying to find a new job.',
@@ -63,7 +73,7 @@ void main() {
 
     test('fails closed when an unexplained proper name remains', () {
       final result = MomPrivacyFilter.deidentify(
-        'I think the situation with Sarah yesterday was stressful.',
+        'I think Sarah upset me yesterday and I need to vent.',
       );
 
       expect(result.safeForCloud, isFalse);
