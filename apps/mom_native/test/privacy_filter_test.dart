@@ -15,6 +15,7 @@ void main() {
       expect(result.text, isNot(contains('253')));
       expect(result.text, isNot(contains('sarah@example.com')));
       expect(result.redactionCount, greaterThanOrEqualTo(3));
+      expect(result.safeForCloud, isTrue);
     });
 
     test('redacts street addresses and account-like numbers', () {
@@ -26,6 +27,7 @@ void main() {
       expect(result.text, contains('[ACCOUNT_NUMBER]'));
       expect(result.text, isNot(contains('123 Main')));
       expect(result.text, isNot(contains('4111 1111')));
+      expect(result.safeForCloud, isTrue);
     });
 
     test('redacts self-identification and named public figures', () {
@@ -36,6 +38,36 @@ void main() {
       expect(result.text, isNot(contains('Jordan')));
       expect(result.text, isNot(contains('Alex Rivera')));
       expect(result.text, contains('[PERSON]'));
+      expect(result.safeForCloud, isTrue);
+    });
+
+    test('generalizes a person named after an interaction verb', () {
+      final result = MomPrivacyFilter.deidentify(
+        'I talked to Marcus about school and I need advice.',
+      );
+
+      expect(result.text, isNot(contains('Marcus')));
+      expect(result.text, contains('[PERSON]'));
+      expect(result.safeForCloud, isTrue);
+    });
+
+    test('generalizes an exact home location', () {
+      final result = MomPrivacyFilter.deidentify(
+        'I live in Tacoma and I am trying to find a new job.',
+      );
+
+      expect(result.text, isNot(contains('Tacoma')));
+      expect(result.text, contains('[LOCATION]'));
+      expect(result.safeForCloud, isTrue);
+    });
+
+    test('fails closed when an unexplained proper name remains', () {
+      final result = MomPrivacyFilter.deidentify(
+        'I think the situation with Sarah yesterday was stressful.',
+      );
+
+      expect(result.safeForCloud, isFalse);
+      expect(result.isUseful, isFalse);
     });
 
     test('preserves non-identifying emotional and temporal context', () {
@@ -46,6 +78,7 @@ void main() {
       expect(result.text, contains('stressed'));
       expect(result.text, contains('rent is due tomorrow'));
       expect(result.redactionCount, 0);
+      expect(result.safeForCloud, isTrue);
       expect(result.isUseful, isTrue);
     });
   });
