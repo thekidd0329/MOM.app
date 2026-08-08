@@ -244,6 +244,7 @@ class MomSyncClient {
     Map<String, dynamic> metadata = const {},
   }) async {
     await ensureRegistered();
+    final now = DateTime.now();
     await _post({
       'action': 'sync_chat',
       'session_id': sessionId,
@@ -251,6 +252,8 @@ class MomSyncClient {
       'content': content,
       'model_provider': modelProvider,
       'model_name': modelName,
+      'local_now': now.toIso8601String(),
+      'utc_offset_minutes': now.timeZoneOffset.inMinutes,
       'metadata': metadata,
     }, authenticated: true);
   }
