@@ -74,6 +74,9 @@ class _MomAppState extends State<MomApp> {
       _sync = MomSyncClient(syncUrl: config.syncUrl);
       _sessionId = await _store.currentSessionId();
       _turns = await _store.loadSession(_sessionId, limit: 200);
+      _captionTurns = _turns
+          .where((turn) => turn.role == 'assistant')
+          .toList(growable: false);
       _microphone = await _micProbe.probe();
 
       if (Platform.isLinux && config.useLocalLlama) {
@@ -215,8 +218,8 @@ class _MomAppState extends State<MomApp> {
           'model': reply.model,
           'knowledge_chars': knowledge.length,
           'output_mode': 'orb_caption',
-          'caption_syllables_per_second': 2,
-          'caption_hold_seconds': 10,
+          'caption_display': 'immediate',
+          'caption_persists': true,
         },
       );
       await _store.append(assistantTurn);
