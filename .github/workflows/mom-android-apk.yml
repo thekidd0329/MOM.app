@@ -140,17 +140,26 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$(git rev-parse --show-toplevel)"
-          CURRENT_MAIN="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          if [ "$CURRENT_MAIN" != "$GITHUB_SHA" ]; then
-            echo "Skipping manifest: a newer main commit exists."
-            exit 0
-          fi
-
           APP_VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
           SHORT_SHA="${GITHUB_SHA::7}"
           ARTIFACT="mom-android-debug-${APP_VERSION}-${SHORT_SHA}"
-          mkdir -p "$ROOT/builds"
-          python3 - "$ROOT/builds/latest_android.json" "$BUILD_RESULT" "$APP_VERSION" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ARTIFACT" <<'PY'
+
+          for ATTEMPT in 1 2 3; do
+            git -C "$ROOT" fetch origin main
+
+            EXISTING_RUN=0
+            if git -C "$ROOT" cat-file -e origin/main:builds/latest_android.json 2>/dev/null; then
+              EXISTING_RUN="$(git -C "$ROOT" show origin/main:builds/latest_android.json | python3 -c 'import json,sys; print(int(json.load(sys.stdin).get("run_id",0)))' 2>/dev/null || echo 0)"
+            fi
+
+            if [ "$EXISTING_RUN" -ge "$GITHUB_RUN_ID" ]; then
+              echo "A newer or equal build manifest already exists."
+              exit 0
+            fi
+
+            git -C "$ROOT" checkout -B build-manifest origin/main
+            mkdir -p "$ROOT/builds"
+            python3 - "$ROOT/builds/latest_android.json" "$BUILD_RESULT" "$APP_VERSION" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ARTIFACT" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -165,10 +174,15 @@ jobs:
           }, indent=2) + "\n")
           PY
 
-          cd "$ROOT"
-          git config user.name "MOM Build Bot"
-          git config user.email "actions@users.noreply.github.com"
-          git checkout -B main "$GITHUB_SHA"
-          git add builds/latest_android.json
-          git commit -m "Record MOM Android build ${BUILD_RESULT}" || exit 0
-          git push origin HEAD:main
+            git -C "$ROOT" config user.name "MOM Build Bot"
+            git -C "$ROOT" config user.email "actions@users.noreply.github.com"
+            git -C "$ROOT" add builds/latest_android.json
+            git -C "$ROOT" commit -m "Record MOM Android build ${BUILD_RESULT}" || exit 0
+            if git -C "$ROOT" push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Manifest push raced with another commit; retrying."
+          done
+
+          echo "Could not publish latest build manifest after retries."
+          exit 1
