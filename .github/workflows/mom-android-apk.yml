@@ -43,13 +43,28 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Resolve build identity
+        id: build_identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          test -n "$APP_VERSION"
+          test -n "$SHORT_SHA"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          printf 'MOM Android APK\nversion=%s\ncommit=%s\n' "$APP_VERSION" "$GITHUB_SHA" > MOM_BUILD.txt
+
       - name: Build debug APK
         run: flutter build apk --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mom-android-debug-${{ github.sha }}
-          path: apps/mom_native/build/app/outputs/flutter-apk/app-debug.apk
+          name: mom-android-debug-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}
+          path: |
+            apps/mom_native/build/app/outputs/flutter-apk/app-debug.apk
+            apps/mom_native/MOM_BUILD.txt
           if-no-files-found: error
           retention-days: 14
