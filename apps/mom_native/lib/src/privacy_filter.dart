@@ -127,7 +127,7 @@ class MomPrivacyFilter {
 
     text = text.replaceAllMapped(
       RegExp(
-        r"\b(?:my\s+name\s+is|i\s+am|i'm|call\s+me)\s+([A-Z][a-z]{1,30})(?:\s+[A-Z][a-z]{1,30})?\b",
+        r'\b(?:my\s+name\s+is|call\s+me)\s+([A-Za-z][A-Za-z\-]{1,30})(?:\s+[A-Za-z][A-Za-z\-]{1,30})?\b',
         caseSensitive: false,
       ),
       (match) {
@@ -136,6 +136,21 @@ class MomPrivacyFilter {
         final whole = match.group(0)!;
         final firstName = match.group(1)!;
         final prefixEnd = whole.toLowerCase().indexOf(firstName.toLowerCase());
+        if (prefixEnd < 0) return '[PERSON]';
+        return '${whole.substring(0, prefixEnd)}[PERSON]';
+      },
+    );
+
+    text = text.replaceAllMapped(
+      RegExp(
+        r"\b(?:I\s+am|I'm|i\s+am|i'm)\s+([A-Z][a-z]{1,30})(?:\s+[A-Z][a-z]{1,30})?\b",
+      ),
+      (match) {
+        count++;
+        kinds.add('person');
+        final whole = match.group(0)!;
+        final firstName = match.group(1)!;
+        final prefixEnd = whole.indexOf(firstName);
         if (prefixEnd < 0) return '[PERSON]';
         return '${whole.substring(0, prefixEnd)}[PERSON]';
       },
