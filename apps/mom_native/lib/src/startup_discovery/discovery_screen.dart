@@ -68,6 +68,16 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
     if (_carousel.hasClients) _carousel.jumpToPage(0);
   }
 
+  Future<void> _finishNow() async {
+    if (_saving || _progress.answeredCount < DiscoveryEngine.minimumQuestions) return;
+    setState(() => _saving = true);
+    final completed = _progress.copyWith(complete: true);
+    await _store.save(completed);
+    if (!mounted) return;
+    setState(() => _progress = completed);
+    await widget.onComplete(completed);
+  }
+
   @override
   void dispose() {
     _carousel.dispose();
@@ -110,7 +120,11 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
               ),
               const SizedBox(height: 34),
               Text(
-                _progress.answeredCount < 4 ? 'Let me get my bearings.' : 'Okay, that tells me something.',
+                _progress.answeredCount < 2
+                    ? 'Let me get my bearings.'
+                    : _progress.answeredCount < 4
+                        ? 'I’m getting the picture.'
+                        : 'That helps.',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
                       color: Theme.of(context).colorScheme.primary,
                       fontWeight: FontWeight.w700,
@@ -130,8 +144,11 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
               Expanded(
                 child: PageView.builder(
                   controller: _carousel,
+                  physics: _saving ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
                   itemCount: node.choices.length,
-                  onPageChanged: (value) => setState(() => _selectedCard = value),
+                  onPageChanged: (value) {
+                    if (!_saving) setState(() => _selectedCard = value);
+                  },
                   itemBuilder: (context, index) {
                     final choice = node.choices[index];
                     return Padding(
@@ -192,11 +209,18 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
               const SizedBox(height: 14),
               Text(
                 _progress.answeredCount < DiscoveryEngine.minimumQuestions
-                    ? 'I am choosing what to ask next from your answers.'
-                    : 'If I already know enough to start well, I will stop here instead of grilling you.',
+                    ? 'A few answers are enough to get started.'
+                    : 'You can start now. MOM can learn the rest naturally.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+              if (_progress.answeredCount >= DiscoveryEngine.minimumQuestions && !_saving) ...[
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _finishNow,
+                  child: const Text('Start using MOM now'),
+                ),
+              ],
               if (_saving) ...[
                 const SizedBox(height: 10),
                 const LinearProgressIndicator(),
