@@ -1,17 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { Pool } from "jsr:@db/postgres@^0";
 
 const U = Deno.env.get("SUPABASE_URL")!;
 const K = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const D = Deno.env.get("SUPABASE_DB_URL")!;
-const HB = (Deno.env.get("HF_API_BASE") ?? "https://router.huggingface.co/v1").replace(/\/$/, "");
-const HM = (Deno.env.get("MOM_EXTRACT_MODEL") ?? Deno.env.get("MOM_MODEL") ?? "").trim();
-const HE = Deno.env.get("HF_TOKEN") ?? Deno.env.get("HUGGINGFACE_API_KEY") ?? "";
+const BRAIN_URL = `${U}/functions/v1/mom-brain`;
 const db = createClient(U, K, { auth: { persistSession: false, autoRefreshToken: false } });
-const pool = new Pool(D, 1);
-let tok = "";
-let model = "";
 
 const C = {
   "Access-Control-Allow-Origin": "*",
@@ -30,21 +23,6 @@ async function h(v: string) {
   return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-async function token() {
-  if (HE) return HE;
-  if (tok) return tok;
-  const c = await pool.connect();
-  try {
-    const r = await c.queryObject<{ decrypted_secret: string }>(
-      "select decrypted_secret from vault.decrypted_secrets where name='mom_hf_token' limit 1",
-    );
-    tok = r.rows[0]?.decrypted_secret?.trim() ?? "";
-    return tok;
-  } finally {
-    c.release();
-  }
-}
-
 async function auth(req: Request) {
   const id = req.headers.get("x-mom-installation") ?? "";
   const q = req.headers.get("x-mom-token") ?? "";
@@ -53,30 +31,6 @@ async function auth(req: Request) {
     .select("id,device_id,token_hash,revoked_at").eq("id", id).maybeSingle();
   if (!data || data.revoked_at || await h(q) !== data.token_hash) return null;
   return data;
-}
-
-async function hf(path: string, init: RequestInit = {}) {
-  const k = await token();
-  if (!k) throw Error("hf_secret_missing");
-  const r = await fetch(HB + path, {
-    ...init,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${k}`, ...(init.headers ?? {}) },
-  });
-  const x = await r.text();
-  let b: any = x;
-  try { b = x ? JSON.parse(x) : {}; } catch {}
-  if (!r.ok) throw Error(`provider_${r.status}`);
-  return b;
-}
-
-async function mdl() {
-  if (HM) return HM;
-  if (model) return model;
-  const d = await hf("/models", { method: "GET" });
-  const a = Array.isArray(d?.data) ? d.data : [];
-  model = t(a.find((x: any) => t(x?.id))?.id, 300);
-  if (!model) throw Error("no_model");
-  return model;
 }
 
 function obj(v: unknown) {
@@ -88,22 +42,40 @@ function obj(v: unknown) {
   return JSON.parse(s);
 }
 
-async function ask(sys: string, prompt: string, max = 650) {
-  const m = await mdl();
+async function ask(req: Request, sys: string, prompt: string) {
   const st = Date.now();
-  const d = await hf("/chat/completions", {
+  const installation = req.headers.get("x-mom-installation") ?? "";
+  const token = req.headers.get("x-mom-token") ?? "";
+  const r = await fetch(BRAIN_URL, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-mom-installation": installation,
+      "x-mom-token": token,
+    },
     body: JSON.stringify({
-      model: m,
-      messages: [{ role: "system", content: sys }, { role: "user", content: prompt }],
+      action: "chat",
+      system_prompt: sys,
+      history: [],
+      user_text: prompt,
+      knowledge_context: "",
+      model: "",
       temperature: 0,
-      max_tokens: max,
-      stream: false,
+      max_history: 2,
     }),
   });
-  const raw = t(d?.choices?.[0]?.message?.content, 12000);
-  if (!raw) throw Error("empty_output");
-  return { data: obj(raw), raw, model: m, latency: Date.now() - st };
+  const rawBody = await r.text();
+  let body: any = {};
+  try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
+  if (!r.ok) throw new Error(`brain_${r.status}:${t(body?.error ?? rawBody, 300)}`);
+  const raw = t(body?.text, 12000);
+  if (!raw) throw new Error("empty_output");
+  return {
+    data: obj(raw),
+    raw,
+    model: t(body?.model, 300, "mom-brain"),
+    latency: Date.now() - st,
+  };
 }
 
 const arr = (v: unknown) => Array.isArray(v)
@@ -126,17 +98,20 @@ async function session(device: string, id: string) {
 
 async function recent(device: string, current: string) {
   const { data } = await db.from("mom_chat_messages").select("content")
-    .eq("device_id", device).eq("role", "user").order("created_at", { ascending: false }).limit(6);
-  return (data ?? []).map((r: any) => t(r.content, 1200)).filter((x: string) => x && x !== current).reverse();
+    .eq("device_id", device).eq("role", "user")
+    .order("created_at", { ascending: false }).limit(6);
+  return (data ?? []).map((r: any) => t(r.content, 1200))
+    .filter((x: string) => x && x !== current).reverse();
 }
 
-async function runProcess(ins: any, body: any) {
+async function runProcess(req: Request, ins: any, body: any) {
   const text = t(body.user_text, 50000);
   if (!text) return j(400, { error: "empty_user_text" });
   const sid = await session(ins.device_id, t(body.session_id, 64));
   const prev = await recent(ins.device_id, text);
   const prompt = `Recent user messages (reference only):\n${prev.map((x: string, i: number) => `${i + 1}. ${x}`).join("\n")}\n\nCURRENT USER MESSAGE:\n${text}`;
-  const ex = await ask(EX, prompt, 650);
+
+  const ex = await ask(req, EX, prompt);
   const clean: any = {
     core_emotions: arr(ex.data?.core_emotions),
     vulnerabilities: arr(ex.data?.vulnerabilities),
@@ -191,7 +166,7 @@ async function runProcess(ins: any, body: any) {
   const items: any[] = [];
   if (timey(text)) {
     const now = t(body.local_now, 80) || new Date().toISOString();
-    const tr = await ask(TM, `LOCAL CURRENT TIME: ${now}\nCURRENT USER MESSAGE:\n${text}`, 500);
+    const tr = await ask(req, TM, `LOCAL CURRENT TIME: ${now}\nCURRENT USER MESSAGE:\n${text}`);
     const raw = Array.isArray(tr.data?.items) ? tr.data.items.slice(0, 8) : [];
     for (const r of raw) {
       const kind = t(r?.kind, 20);
@@ -298,16 +273,26 @@ Deno.serve(async (req: Request) => {
   let body: any;
   try { body = await req.json(); } catch { return j(400, { error: "invalid_json" }); }
   const action = t(body?.action, 32);
-  if (action === "health") return j(200, {
-    ok: true,
-    service: "mom-intelligence",
-    version: 2,
-    configured: (await token()).length > 0,
-  });
+  if (action === "health") {
+    const brain = await fetch(BRAIN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "health" }),
+    });
+    let data: any = {};
+    try { data = await brain.json(); } catch {}
+    return j(200, {
+      ok: true,
+      service: "mom-intelligence",
+      version: 3,
+      configured: brain.ok && data?.configured === true,
+      provider_path: "mom-brain",
+    });
+  }
   const ins = await auth(req);
   if (!ins) return j(401, { error: "invalid_installation_token" });
   try {
-    if (action === "process") return await runProcess(ins, body);
+    if (action === "process") return await runProcess(req, ins, body);
     if (action === "snapshot") return await snapshot(ins);
     if (action === "cleanup_test") return await cleanup(ins);
     return j(400, { error: "unknown_action" });
