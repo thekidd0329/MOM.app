@@ -133,11 +133,14 @@ jobs:
           assert totals['profile_facts'] >= 1, data
           assert totals['extractions'] >= 1, data
           assert totals['temporal_items'] >= 1, data
-          assert totals['data_points'] >= 2, data
-          assert totals['data_points_per_1000_chars'] > 0, data
+          assert totals['unique_data_points'] >= 2, data
+          assert totals['user_input_characters'] > 0, data
+          assert totals['data_points_per_1000_user_chars'] > 0, data
           print('PROFILE FACTS:', totals['profile_facts'])
           print('TEMPORAL ITEMS:', totals['temporal_items'])
-          print('DATA POINTS / 1000 CHARS:', totals['data_points_per_1000_chars'])
+          print('UNIQUE DATA POINTS:', totals['unique_data_points'])
+          print('USER INPUT CHARACTERS:', totals['user_input_characters'])
+          print('DATA POINTS / 1000 USER CHARS:', totals['data_points_per_1000_user_chars'])
           print('AVERAGE AGENT LATENCY MS:', totals['average_agent_latency_ms'])
           PY
 
