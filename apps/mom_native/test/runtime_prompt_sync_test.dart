@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('bundled runtime prompt matches canonical MOM prompt', () {
-    final canonical = File('../../core_llm/mom_identity/runtime_prompt.md').readAsStringSync();
+    final canonical = File('../../core_llm/mamallama/runtime_prompt.md').readAsStringSync();
     final bundled = File('assets/runtime_prompt.md').readAsStringSync();
 
     expect(bundled, canonical);
