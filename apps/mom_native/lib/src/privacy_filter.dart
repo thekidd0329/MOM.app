@@ -3,30 +3,73 @@ class DeidentifiedText {
     required this.text,
     required this.redactionCount,
     required this.redactionKinds,
+    required this.safeForCloud,
   });
 
   final String text;
   final int redactionCount;
   final Set<String> redactionKinds;
+  final bool safeForCloud;
 
-  bool get isUseful => text.replaceAll(RegExp(r'\[[A-Z_]+\]'), '').trim().isNotEmpty;
+  bool get isUseful =>
+      safeForCloud &&
+      text.replaceAll(RegExp(r'\[[A-Z_]+\]'), '').trim().isNotEmpty;
 }
 
 class MomPrivacyFilter {
   MomPrivacyFilter._();
+
+  static final List<RegExp> _directIdentifierPatterns = [
+    RegExp(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', caseSensitive: false),
+    RegExp(r'https?://\S+|www\.\S+', caseSensitive: false),
+    RegExp(r'(?<!\w)@[A-Za-z0-9_]{2,32}\b'),
+    RegExp(r'\b\d{3}-\d{2}-\d{4}\b'),
+    RegExp(r'(?<!\d)(?:\+?1[ .-]?)?\(?[2-9]\d{2}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\d)'),
+    RegExp(r'\b(?:\d[ -]*?){13,19}\b'),
+    RegExp(r'\b(?:\d{1,3}\.){3}\d{1,3}\b'),
+    RegExp(r'(?<!\w)-?\d{1,3}\.\d{4,}\s*,\s*-?\d{1,3}\.\d{4,}(?!\w)'),
+  ];
+
+  static const _safeCapitalizedWords = <String>{
+    'I',
+    'MOM',
+    'Mom',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+    'Today',
+    'Tonight',
+    'Tomorrow',
+    'Yesterday',
+  };
 
   static DeidentifiedText deidentify(String raw) {
     var text = raw.trim();
     var count = 0;
     final kinds = <String>{};
 
-    String replace(RegExp pattern, String label, String kind) {
-      text = text.replaceAllMapped(pattern, (match) {
+    void replace(RegExp pattern, String label, String kind) {
+      text = text.replaceAllMapped(pattern, (_) {
         count++;
         kinds.add(kind);
         return label;
       });
-      return text;
     }
 
     replace(
@@ -44,11 +87,7 @@ class MomPrivacyFilter {
       '[HANDLE]',
       'handle',
     );
-    replace(
-      RegExp(r'\b\d{3}-\d{2}-\d{4}\b'),
-      '[SSN]',
-      'ssn',
-    );
+    replace(RegExp(r'\b\d{3}-\d{2}-\d{4}\b'), '[SSN]', 'ssn');
     replace(
       RegExp(r'(?<!\d)(?:\+?1[ .-]?)?\(?[2-9]\d{2}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\d)'),
       '[PHONE]',
@@ -77,6 +116,14 @@ class MomPrivacyFilter {
       '[ADDRESS]',
       'address',
     );
+    replace(
+      RegExp(
+        r'\b(?:born|birthday|date\s+of\s+birth|dob)\s*(?:is|was|:)?\s*(?:on\s+)?(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?)',
+        caseSensitive: false,
+      ),
+      '[BIRTH_DATE]',
+      'birth_date',
+    );
 
     text = text.replaceAllMapped(
       RegExp(
@@ -85,8 +132,12 @@ class MomPrivacyFilter {
       (match) {
         count++;
         kinds.add('person');
-        final prefix = match.group(0)!.substring(0, match.group(0)!.indexOf(match.group(1)!));
-        return '${prefix}[PERSON]';
+        final whole = match.group(0)!;
+        final name = match.group(1)!;
+        return whole.replaceFirst(name, '[PERSON]').replaceAll(
+              RegExp(r'\[PERSON\]\s+[A-Z][a-z]{1,30}$'),
+              '[PERSON]',
+            );
       },
     );
 
@@ -104,15 +155,60 @@ class MomPrivacyFilter {
 
     text = text.replaceAllMapped(
       RegExp(
-        r'\b(?:i\s+live|i\s+stay|i\s+am\s+staying|i\s+moved|we\s+live|we\s+moved)\s+(?:in|at|near)\s+([A-Z][A-Za-z.\-]*(?:\s+[A-Z][A-Za-z.\-]*){0,3})\b',
+        r'\b((?:with|from|to|about|called|texted|messaged|met|saw|visited|helped|asked|told|talked\s+to|spoke\s+with)\s+)([A-Z][a-z]{1,30})(?:\s+[A-Z][a-z]{1,30})?\b',
+        caseSensitive: false,
+      ),
+      (match) {
+        count++;
+        kinds.add('person');
+        return '${match.group(1)}[PERSON]';
+      },
+    );
+
+    text = text.replaceAllMapped(
+      RegExp(r"\b([A-Z][a-z]{1,30})'s\b"),
+      (match) {
+        final word = match.group(1)!;
+        if (_safeCapitalizedWords.contains(word)) return match.group(0)!;
+        count++;
+        kinds.add('person');
+        return "[PERSON]'s";
+      },
+    );
+
+    text = text.replaceAllMapped(
+      RegExp(
+        r'\b((?:i\s+live|i\s+stay|i\s+am\s+staying|i\s+moved|we\s+live|we\s+moved|i\s+am\s+from|i\s+grew\s+up)\s+(?:in|at|near|to|from)\s+)([A-Z][A-Za-z.\-]*(?:\s+[A-Z][A-Za-z.\-]*){0,3})\b',
         caseSensitive: false,
       ),
       (match) {
         count++;
         kinds.add('location');
-        final full = match.group(0)!;
-        final location = match.group(1)!;
-        return full.replaceFirst(location, '[LOCATION]');
+        return '${match.group(1)}[LOCATION]';
+      },
+    );
+
+    text = text.replaceAllMapped(
+      RegExp(
+        r'\b((?:going|went|driving|drove|traveling|travelling|flew|flying|staying|working|worked|school|hospital|court)\s+(?:in|at|to|near)\s+)([A-Z][A-Za-z.\-]*(?:\s+[A-Z][A-Za-z.\-]*){0,3})\b',
+        caseSensitive: false,
+      ),
+      (match) {
+        count++;
+        kinds.add('location');
+        return '${match.group(1)}[LOCATION]';
+      },
+    );
+
+    text = text.replaceAllMapped(
+      RegExp(
+        r'\b((?:work|worked|working|employed|school|study|studied|attend|attended)\s+(?:for|at)\s+)([A-Z][A-Za-z0-9&.\-]*(?:\s+[A-Z][A-Za-z0-9&.\-]*){0,4})\b',
+        caseSensitive: false,
+      ),
+      (match) {
+        count++;
+        kinds.add('organization');
+        return '${match.group(1)}[ORGANIZATION]';
       },
     );
 
@@ -121,10 +217,39 @@ class MomPrivacyFilter {
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
 
+    final safe = !_containsDirectIdentifier(text) &&
+        !_containsResidualProperName(text);
+
     return DeidentifiedText(
       text: text,
       redactionCount: count,
       redactionKinds: kinds,
+      safeForCloud: safe,
     );
+  }
+
+  static bool _containsDirectIdentifier(String text) =>
+      _directIdentifierPatterns.any((pattern) => pattern.hasMatch(text));
+
+  static bool _containsResidualProperName(String text) {
+    final cleaned = text.replaceAll(RegExp(r'\[[A-Z_]+\]'), '');
+    final matches = RegExp(r'\b[A-Z][a-z]{1,30}\b').allMatches(cleaned);
+    for (final match in matches) {
+      final word = match.group(0)!;
+      if (_safeCapitalizedWords.contains(word)) continue;
+
+      final index = match.start;
+      var atSentenceStart = index == 0;
+      if (!atSentenceStart) {
+        var cursor = index - 1;
+        while (cursor >= 0 && cleaned[cursor].trim().isEmpty) {
+          cursor--;
+        }
+        atSentenceStart = cursor < 0 || '.!?\n'.contains(cleaned[cursor]);
+      }
+      if (atSentenceStart) continue;
+      return true;
+    }
+    return false;
   }
 }
