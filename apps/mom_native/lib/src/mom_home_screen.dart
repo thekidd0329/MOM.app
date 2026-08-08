@@ -67,21 +67,13 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
 
   Future<void> _playCaption(String text) async {
     final run = ++_captionRun;
-    final words = RegExp(r'\S+').allMatches(text).map((m) => m.group(0)!).toList();
-    if (words.isEmpty) return;
+    if (text.trim().isEmpty || !mounted) return;
+    setState(() => _caption = text.trim());
 
-    var visible = '';
-    for (final word in words) {
-      if (!mounted || run != _captionRun) return;
-      visible = visible.isEmpty ? word : '$visible $word';
-      setState(() => _caption = visible);
-      final syllables = _estimateSyllables(word);
-      await Future<void>.delayed(Duration(milliseconds: 500 * syllables));
-    }
-
-    await Future<void>.delayed(const Duration(seconds: 10));
+    // Keep the latest reply visible until MOM says something else. Reading speed
+    // belongs to the user; the UI must not drip-feed text or erase it.
+    await Future<void>.delayed(Duration.zero);
     if (!mounted || run != _captionRun) return;
-    setState(() => _caption = '');
   }
 
   int _estimateSyllables(String raw) {
@@ -103,21 +95,56 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
   }
 
   Future<void> _handleMicTap() async {
-    unawaited(widget.onProbeMicrophone(false));
+    await widget.onProbeMicrophone(true);
+    if (!mounted) return;
 
-    final run = ++_captionRun;
-    setState(() => _caption = 'My ears are still being constructed.');
-
-    await Future<void>.delayed(const Duration(milliseconds: 1400));
-    if (!mounted || run != _captionRun) return;
-
-    setState(() => _textMode = true);
+    setState(() {
+      _textMode = true;
+      _caption = 'Use the microphone on your keyboard to talk to me.';
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _textFocus.requestFocus();
     });
+  }
 
-    unawaited(
-      _playCaption('Go ahead and use your mic on your keyboard right here.'),
+  void _toggleTextMode() {
+    setState(() => _textMode = !_textMode);
+    if (_textMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _textFocus.requestFocus();
+      });
+    } else {
+      _textFocus.unfocus();
+    }
+  }
+
+  void _showHistory() {
+    final replies = widget.turns
+        .where((turn) => turn.role == 'assistant' && turn.content.trim().isNotEmpty)
+        .toList()
+        .reversed
+        .toList(growable: false);
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.72,
+          child: replies.isEmpty
+              ? const Center(child: Text('No replies yet.'))
+              : ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                  itemCount: replies.length,
+                  separatorBuilder: (_, __) => const Divider(height: 28),
+                  itemBuilder: (context, index) => SelectableText(
+                    replies[index].content,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.4),
+                  ),
+                ),
+        ),
+      ),
     );
   }
 
@@ -146,6 +173,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     final background = dark ? Colors.black : Colors.white;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: background,
       body: SafeArea(
         child: LayoutBuilder(
@@ -162,9 +190,11 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                   top: 16,
                   left: 16,
                   child: _OutlineIconButton(
-                    icon: Icons.mic_off,
+                    icon: widget.microphone.available ? Icons.mic : Icons.mic_none,
                     color: accent,
-                    tooltip: 'MOM\'s ears are still being constructed',
+                    tooltip: widget.microphone.permissionGranted
+                        ? 'Use microphone'
+                        : 'Enable microphone',
                     onPressed: _handleMicTap,
                   ),
                 ),
@@ -222,11 +252,16 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                                       constraints.maxWidth * 0.88,
                                     ),
                                   ),
-                                  child: Text(
-                                    _captionWindow,
-                                    maxLines: 4,
-                                    overflow: TextOverflow.fade,
-                                    textAlign: TextAlign.center,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(12),
+                                    onTap: _showHistory,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      child: Text(
+                                        _captionWindow,
+                                        maxLines: 5,
+                                        overflow: TextOverflow.ellipsis,
+                                        textAlign: TextAlign.center,
                                     style: TextStyle(
                                       color: accent,
                                       fontSize:
@@ -239,6 +274,8 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                                           blurRadius: 10,
                                         ),
                                       ],
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -269,7 +306,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                     child: IconButton(
                       tooltip: 'Text MOM',
                       icon: Icon(Icons.keyboard, color: accent),
-                      onPressed: () => setState(() => _textMode = !_textMode),
+                      onPressed: _toggleTextMode,
                     ),
                   ),
                 ),
