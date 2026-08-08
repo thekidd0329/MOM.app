@@ -109,3 +109,25 @@ jobs:
             apps/mom_native/MOM_BUILD.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish verified APK to private download repo
+        if: ${{ secrets.APK_REPO_TOKEN != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          APP_VERSION="${{ steps.build_identity.outputs.app_version }}"
+          SHORT_SHA="${{ steps.build_identity.outputs.short_sha }}"
+          OUTPUT_APK="build/app/outputs/flutter-apk/MOM-${APP_VERSION}-${SHORT_SHA}-debug.apk"
+          TAG="mom-${APP_VERSION}-${SHORT_SHA}"
+
+          test -s "$OUTPUT_APK"
+          test -s MOM_BUILD.txt
+
+          gh release create "$TAG" \
+            "$OUTPUT_APK#MOM.apk" \
+            "MOM_BUILD.txt#MOM_BUILD.txt" \
+            --repo thekidd0329/Cleantestapp \
+            --title "MOM ${APP_VERSION} (${SHORT_SHA})" \
+            --notes "Verified MOM Android build from the private source repository. Download MOM.apk below."
