@@ -63,6 +63,8 @@ jobs:
             'session_id': os.environ['SESSION'],
             'role': 'user',
             'content': os.environ['MESSAGE'],
+            'local_now': '2026-08-07T17:40:00',
+            'utc_offset_minutes': -420,
             'metadata': {'ci_intelligence_proof': True}
           }))
           PY
@@ -88,7 +90,8 @@ jobs:
             'action': 'process',
             'session_id': os.environ['SESSION'],
             'user_text': os.environ['MESSAGE'],
-            'local_now': '2026-08-07T17:40:00-07:00'
+            'local_now': '2026-08-07T17:40:00',
+            'utc_offset_minutes': -420
           }))
           PY
           )"
@@ -110,6 +113,7 @@ jobs:
           assert int(intel.get('facts_produced', 0)) >= 1, data
           assert int(intel.get('data_points', 0)) >= 2, data
           assert int(intel.get('temporal_items', 0)) >= 1, data
+          assert float(intel.get('data_points_per_1000_user_chars', 0)) > 0, data
           print('LIVE EXTRACTION PROOF:', intel)
           PY
 
@@ -136,11 +140,17 @@ jobs:
           assert totals['unique_data_points'] >= 2, data
           assert totals['user_input_characters'] > 0, data
           assert totals['data_points_per_1000_user_chars'] > 0, data
+          items=data.get('open_temporal_items') or []
+          assert items, data
+          deadline=items[0]
+          assert deadline.get('time_text') == 'tomorrow at 4 PM', data
+          assert str(deadline.get('due_at') or '').startswith('2026-08-08T23:00:00'), data
           print('PROFILE FACTS:', totals['profile_facts'])
           print('TEMPORAL ITEMS:', totals['temporal_items'])
           print('UNIQUE DATA POINTS:', totals['unique_data_points'])
           print('USER INPUT CHARACTERS:', totals['user_input_characters'])
           print('DATA POINTS / 1000 USER CHARS:', totals['data_points_per_1000_user_chars'])
+          print('DEADLINE UTC:', deadline.get('due_at'))
           print('AVERAGE AGENT LATENCY MS:', totals['average_agent_latency_ms'])
           PY
 
