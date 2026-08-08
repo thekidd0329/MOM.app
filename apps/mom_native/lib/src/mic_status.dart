@@ -53,8 +53,28 @@ class MomMicrophoneStatus {
       };
 }
 
+class MomRuntimeDeviceState {
+  static MomMicrophoneStatus microphone =
+      const MomMicrophoneStatus.unknown();
+
+  static String get promptContext => '''
+## Current device context
+Input mode: text.
+Microphone state: ${microphone.label}.
+Microphone permission granted: ${microphone.permissionGranted}.
+Detected microphone inputs: ${microphone.inputCount}.
+Voice capture is not enabled in this beta yet.
+Treat this as live device state, not as a personal fact about your person. Do not narrate these implementation details unless they are relevant to what your person asks.
+'''.trim();
+}
+
 class MomMicrophoneProbe {
   final AudioRecorder _recorder = AudioRecorder();
+
+  MomMicrophoneStatus _publish(MomMicrophoneStatus status) {
+    MomRuntimeDeviceState.microphone = status;
+    return status;
+  }
 
   Future<MomMicrophoneStatus> probe({bool requestPermission = false}) async {
     try {
@@ -69,35 +89,35 @@ class MomMicrophoneProbe {
       }
 
       if (inputs.isNotEmpty) {
-        return MomMicrophoneStatus(
+        return _publish(MomMicrophoneStatus(
           state: permission
               ? MomMicrophoneState.available
               : MomMicrophoneState.permissionNeeded,
           permissionGranted: permission,
           inputCount: inputs.length,
-        );
+        ));
       }
 
       if (!permission) {
-        return const MomMicrophoneStatus(
+        return _publish(const MomMicrophoneStatus(
           state: MomMicrophoneState.permissionNeeded,
           permissionGranted: false,
           inputCount: 0,
-        );
+        ));
       }
 
-      return const MomMicrophoneStatus(
+      return _publish(const MomMicrophoneStatus(
         state: MomMicrophoneState.unavailable,
         permissionGranted: true,
         inputCount: 0,
-      );
+      ));
     } catch (error) {
-      return MomMicrophoneStatus(
+      return _publish(MomMicrophoneStatus(
         state: MomMicrophoneState.error,
         permissionGranted: false,
         inputCount: 0,
         detail: error.runtimeType.toString(),
-      );
+      ));
     }
   }
 
