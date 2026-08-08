@@ -13,6 +13,16 @@ class StartupIntroStore {
     return prefs.getBool(_completeKey) ?? false;
   }
 
+  Future<String> savedName() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_nameKey) ?? '';
+  }
+
+  Future<bool> allowsStrongLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_languageKey) ?? true;
+  }
+
   Future<void> complete({
     required bool allowStrongLanguage,
     required String name,
