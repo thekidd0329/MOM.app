@@ -11,6 +11,9 @@ import 'src/knowledge.dart';
 import 'src/llama_manager.dart';
 import 'src/local_store.dart';
 import 'src/model_client.dart';
+import 'src/startup_discovery/discovery_models.dart';
+import 'src/startup_discovery/discovery_screen.dart';
+import 'src/startup_discovery/discovery_store.dart';
 import 'src/sync_client.dart';
 
 void main() {
@@ -30,6 +33,7 @@ class _MomAppState extends State<MomApp> {
   final ConversationStore _store = ConversationStore();
   final KnowledgeService _knowledge = KnowledgeService();
   final LlamaManager _llama = LlamaManager();
+  final DiscoveryProgressStore _discoveryStore = DiscoveryProgressStore();
 
   MomConfig? _config;
   MomSyncClient? _sync;
@@ -37,6 +41,7 @@ class _MomAppState extends State<MomApp> {
       'MOM exists to act in the direct best interest of her user; every response should serve that purpose.';
   String _sessionId = '';
   List<ChatTurn> _turns = [];
+  DiscoveryProgress _discovery = const DiscoveryProgress();
   bool _booting = true;
   bool _busy = false;
   String _status = 'starting';
@@ -54,6 +59,12 @@ class _MomAppState extends State<MomApp> {
       try {
         _systemPrompt = await rootBundle.loadString('assets/runtime_prompt.md');
       } catch (_) {}
+
+      _discovery = await _discoveryStore.load();
+      if (_discovery.complete) {
+        _systemPrompt = '$_systemPrompt\n\n${_discovery.toPromptSummary()}';
+      }
+
       await _knowledge.load(repoRoot: config.repoRoot);
       _sync = MomSyncClient(syncUrl: config.syncUrl);
       _sessionId = await _store.currentSessionId();
@@ -72,6 +83,8 @@ class _MomAppState extends State<MomApp> {
           'platform': Platform.operatingSystem,
           'knowledge_documents': _knowledge.entryCount,
           'local_llama': config.useLocalLlama,
+          'startup_discovery_complete': _discovery.complete,
+          'startup_discovery_answers': _discovery.answeredCount,
         }));
       }
     } catch (_) {
@@ -79,6 +92,24 @@ class _MomAppState extends State<MomApp> {
     } finally {
       if (mounted) setState(() => _booting = false);
     }
+  }
+
+  Future<void> _completeDiscovery(DiscoveryProgress progress) async {
+    final completed =
+        progress.complete ? progress : progress.copyWith(complete: true);
+    await _discoveryStore.save(completed);
+    if (!mounted) return;
+
+    setState(() {
+      _discovery = completed;
+      _systemPrompt = '$_systemPrompt\n\n${completed.toPromptSummary()}';
+      _status = 'online';
+    });
+
+    unawaited(_safeEvent('startup_discovery_complete', payload: {
+      'answers': completed.answeredCount,
+      'average_certainty': completed.averageCertainty,
+    }));
   }
 
   Future<void> _safeEvent(
@@ -179,7 +210,8 @@ class _MomAppState extends State<MomApp> {
       final failure = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
-        content: 'Something between me and my brain is not answering. Try that again in a second.',
+        content:
+            'Something between me and my brain is not answering. Try that again in a second.',
         createdAt: DateTime.now(),
         metadata: const {'local_error': true},
       );
@@ -262,32 +294,40 @@ class _MomAppState extends State<MomApp> {
       seedColor: const Color(0xFFE46C7A),
       brightness: Brightness.dark,
     );
+
+    Widget home;
+    if (_booting) {
+      home = Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 18),
+              Text(_status),
+            ],
+          ),
+        ),
+      );
+    } else if (!_discovery.complete) {
+      home = StartupDiscoveryScreen(onComplete: _completeDiscovery);
+    } else {
+      home = ChatScreen(
+        turns: _turns,
+        busy: _busy,
+        status: _status,
+        onSend: _send,
+        onSettings: _openSettings,
+        onDiagnostics: _openDiagnostics,
+        onNewConversation: _newConversation,
+      );
+    }
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'MOM',
       theme: ThemeData(colorScheme: scheme, useMaterial3: true),
-      home: _booting
-          ? Scaffold(
-              body: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 18),
-                    Text(_status),
-                  ],
-                ),
-              ),
-            )
-          : ChatScreen(
-              turns: _turns,
-              busy: _busy,
-              status: _status,
-              onSend: _send,
-              onSettings: _openSettings,
-              onDiagnostics: _openDiagnostics,
-              onNewConversation: _newConversation,
-            ),
+      home: home,
     );
   }
 }

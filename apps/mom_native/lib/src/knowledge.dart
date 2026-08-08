@@ -6,9 +6,10 @@ import 'package:flutter/services.dart';
 import 'config.dart';
 
 class KnowledgeEntry {
-  const KnowledgeEntry(this.path, this.text);
+  const KnowledgeEntry(this.path, this.text, {this.live = false});
   final String path;
   final String text;
+  final bool live;
 }
 
 class KnowledgeHit {
@@ -62,19 +63,21 @@ class KnowledgeService {
   Future<void> _loadLiveRepo(String rootPath) async {
     final root = Directory(rootPath);
     if (!await root.exists()) return;
-    final bundledPaths = _entries.map((e) => e.path).toSet();
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
       final relative = entity.path.substring(root.path.length).replaceFirst(RegExp(r'^[/\\]+'), '');
       final parts = relative.split(RegExp(r'[/\\]+'));
       if (parts.any(excludedDirectoryNames.contains)) continue;
-      if (bundledPaths.contains(relative)) continue;
       final lower = relative.toLowerCase();
       if (!allowedExtensions.any(lower.endsWith)) continue;
       try {
         if (await entity.length() > 160000) continue;
         final text = await entity.readAsString();
-        if (text.trim().isNotEmpty) _entries.add(KnowledgeEntry(relative, text));
+        if (text.trim().isEmpty) continue;
+
+        // Desktop live-repo content is authoritative over the bundled snapshot.
+        _entries.removeWhere((entry) => entry.path == relative);
+        _entries.add(KnowledgeEntry(relative, text, live: true));
       } catch (_) {}
     }
   }
@@ -92,7 +95,12 @@ class KnowledgeService {
         final count = _countOccurrences(text, token);
         score += count > 6 ? 6 : count;
       }
-      if (score > 0) hits.add(KnowledgeHit(entry, score));
+      if (score > 0) {
+        // A configured desktop repository is the freshest source. Relevant live
+        // hits should not be crowded out by older bundled copies or large docs.
+        if (entry.live) score += 12;
+        hits.add(KnowledgeHit(entry, score));
+      }
     }
     hits.sort((a, b) => b.score.compareTo(a.score));
     return hits.take(limit).toList(growable: false);
