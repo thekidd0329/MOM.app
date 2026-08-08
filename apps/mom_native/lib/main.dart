@@ -16,6 +16,7 @@ import 'src/mom_login_screen.dart';
 import 'src/startup_discovery/discovery_models.dart';
 import 'src/startup_discovery/discovery_screen.dart';
 import 'src/startup_discovery/discovery_store.dart';
+import 'src/startup_intro_screen.dart';
 import 'src/sync_client.dart';
 
 void main() {
@@ -37,6 +38,7 @@ class _MomAppState extends State<MomApp> {
   final LlamaManager _llama = LlamaManager();
   final DiscoveryProgressStore _discoveryStore = DiscoveryProgressStore();
   final MomMicrophoneProbe _micProbe = MomMicrophoneProbe();
+  final StartupIntroStore _startupIntroStore = StartupIntroStore();
 
   MomConfig? _config;
   MomSyncClient? _sync;
@@ -48,6 +50,7 @@ class _MomAppState extends State<MomApp> {
   DiscoveryProgress _discovery = const DiscoveryProgress();
   MomMicrophoneStatus _microphone = const MomMicrophoneStatus.unknown();
   bool _booting = true;
+  bool _startupIntroComplete = false;
   bool _busy = false;
   String _status = 'starting';
 
@@ -64,6 +67,17 @@ class _MomAppState extends State<MomApp> {
       try {
         _systemPrompt = await rootBundle.loadString('assets/runtime_prompt.md');
       } catch (_) {}
+
+      _startupIntroComplete = await _startupIntroStore.isComplete();
+      if (_startupIntroComplete) {
+        final savedName = await _startupIntroStore.savedName();
+        final strongLanguage = await _startupIntroStore.allowsStrongLanguage();
+        if (savedName.isNotEmpty) {
+          _systemPrompt = '$_systemPrompt\n\nThe person wants to be called $savedName.';
+        }
+        _systemPrompt =
+            '$_systemPrompt\nLanguage preference: ${strongLanguage ? 'strong language is allowed' : 'keep language clean'}.';
+      }
 
       _discovery = await _discoveryStore.load();
       if (_discovery.complete) {
@@ -102,6 +116,22 @@ class _MomAppState extends State<MomApp> {
     } finally {
       if (mounted) setState(() => _booting = false);
     }
+  }
+
+  Future<void> _completeStartupIntro({
+    required bool allowStrongLanguage,
+    required String name,
+  }) async {
+    await _startupIntroStore.complete(
+      allowStrongLanguage: allowStrongLanguage,
+      name: name,
+    );
+    if (!mounted) return;
+    setState(() {
+      _startupIntroComplete = true;
+      _systemPrompt =
+          '$_systemPrompt\n\nThe person wants to be called $name.\nLanguage preference: ${allowStrongLanguage ? 'strong language is allowed' : 'keep language clean'}.';
+    });
   }
 
   Future<void> _completeDiscovery(DiscoveryProgress progress) async {
@@ -343,6 +373,8 @@ class _MomAppState extends State<MomApp> {
           ),
         ),
       );
+    } else if (!_startupIntroComplete) {
+      home = StartupIntroScreen(onComplete: _completeStartupIntro);
     } else if (!_discovery.complete) {
       home = StartupDiscoveryScreen(onComplete: _completeDiscovery);
     } else {
