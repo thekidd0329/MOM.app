@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'privacy_filter.dart';
+
 class BrainReply {
   const BrainReply({required this.text, required this.model});
 
@@ -113,7 +115,7 @@ class MomSyncClient {
     }
   }
 
-  Future<void> ensureRegistered({String appVersion = '0.2.0'}) async {
+  Future<void> ensureRegistered({String appVersion = '0.2.1'}) async {
     if (await registered()) return;
 
     final inFlight = _registrationFlights[syncUrl];
@@ -147,10 +149,7 @@ class MomSyncClient {
           'device_id': deviceId,
           'platform': Platform.operatingSystem,
           'app_version': appVersion,
-          'metadata': {
-            'os_version': Platform.operatingSystemVersion,
-            'locale': Platform.localeName,
-          },
+          'metadata': const {'privacy_mode': 'local_raw_deid_cloud_v1'},
         });
         final id = result['installation_id'];
         final newToken = result['token'];
@@ -235,6 +234,10 @@ class MomSyncClient {
     );
   }
 
+  /// Raw chat is already persisted by ConversationStore on the device.
+  /// This compatibility method now sends only locally de-identified USER text
+  /// to the research/intelligence endpoint. Assistant turns never leave the
+  /// device through the sync path.
   Future<void> syncChat({
     required String sessionId,
     required String role,
@@ -243,19 +246,25 @@ class MomSyncClient {
     String modelName = '',
     Map<String, dynamic> metadata = const {},
   }) async {
+    if (role != 'user') return;
+
+    final deidentified = MomPrivacyFilter.deidentify(content);
+    if (!deidentified.isUseful) return;
+
     await ensureRegistered();
-    final now = DateTime.now();
-    await _post({
-      'action': 'sync_chat',
-      'session_id': sessionId,
-      'role': role,
-      'content': content,
-      'model_provider': modelProvider,
-      'model_name': modelName,
-      'local_now': now.toIso8601String(),
-      'utc_offset_minutes': now.timeZoneOffset.inMinutes,
-      'metadata': metadata,
-    }, authenticated: true);
+    await _post(
+      {
+        'action': 'process_deidentified',
+        'privacy_version': 'deid-v1',
+        'sanitized_text': deidentified.text,
+        'original_characters': content.length,
+        'redaction_count': deidentified.redactionCount,
+        'redaction_kinds': deidentified.redactionKinds.toList()..sort(),
+      },
+      authenticated: true,
+      endpoint: intelligenceUrl,
+      timeout: const Duration(minutes: 2),
+    );
   }
 
   Future<void> event(
@@ -272,6 +281,8 @@ class MomSyncClient {
     }, authenticated: true);
   }
 
+  /// Persistent raw memories are local-only. This intentionally performs no
+  /// cloud write; callers should use ConversationStore/local memory instead.
   Future<void> memory({
     required String content,
     String? sessionId,
@@ -279,23 +290,15 @@ class MomSyncClient {
     String? subject,
     String truthState = 'candidate',
     double confidence = 0.5,
-  }) async {
-    await ensureRegistered();
-    await _post({
-      'action': 'memory',
-      'content': content,
-      if (sessionId != null) 'session_id': sessionId,
-      'kind': kind,
-      if (subject != null) 'subject': subject,
-      'truth_state': truthState,
-      'confidence': confidence,
-    }, authenticated: true);
-  }
+  }) async {}
 
-  Future<Map<String, dynamic>> history({int limit = 100}) async {
-    await ensureRegistered();
-    return _post({'action': 'history', 'limit': limit}, authenticated: true);
-  }
+  /// Cloud transcript history is disabled by design. Raw history is loaded
+  /// from ConversationStore on-device.
+  Future<Map<String, dynamic>> history({int limit = 100}) async => const {
+        'sessions': <dynamic>[],
+        'messages': <dynamic>[],
+        'local_only': true,
+      };
 
   void close() => _http.close();
 }
