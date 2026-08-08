@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 import 'src/config.dart';
 import 'src/diagnostics.dart';
@@ -36,14 +37,14 @@ class _MomAppState extends State<MomApp> {
 
   MomConfig? _config;
   MomSyncClient? _sync;
-  String _systemPrompt = 'You are MOM. Be useful, truthful, persistent, and grounded.';
+  String _systemPrompt =
+      'MOM exists to act in the direct best interest of her user; every response should serve that purpose.';
   String _sessionId = '';
   List<ChatTurn> _turns = [];
   DiscoveryProgress _discovery = const DiscoveryProgress();
   bool _booting = true;
   bool _busy = false;
   String _status = 'starting';
-  String _activeModel = '';
 
   @override
   void initState() {
@@ -86,15 +87,16 @@ class _MomAppState extends State<MomApp> {
           'startup_discovery_answers': _discovery.answeredCount,
         }));
       }
-    } catch (error) {
-      _status = 'startup issue: $error';
+    } catch (_) {
+      _status = 'startup issue';
     } finally {
       if (mounted) setState(() => _booting = false);
     }
   }
 
   Future<void> _completeDiscovery(DiscoveryProgress progress) async {
-    final completed = progress.complete ? progress : progress.copyWith(complete: true);
+    final completed =
+        progress.complete ? progress : progress.copyWith(complete: true);
     await _discoveryStore.save(completed);
     if (!mounted) return;
 
@@ -110,7 +112,10 @@ class _MomAppState extends State<MomApp> {
     }));
   }
 
-  Future<void> _safeEvent(String name, {Map<String, dynamic> payload = const {}}) async {
+  Future<void> _safeEvent(
+    String name, {
+    Map<String, dynamic> payload = const {},
+  }) async {
     final config = _config;
     final sync = _sync;
     if (config == null || sync == null || !config.productTelemetry) return;
@@ -144,7 +149,6 @@ class _MomAppState extends State<MomApp> {
   Future<void> _send(String text) async {
     final config = _config;
     if (config == null || _busy || text.trim().isEmpty) return;
-
     final issues = config.validate().where((e) => e.fatal).toList();
     if (issues.isNotEmpty) {
       setState(() => _status = 'settings need attention');
@@ -159,13 +163,11 @@ class _MomAppState extends State<MomApp> {
       content: text.trim(),
       createdAt: DateTime.now(),
     );
-
     setState(() {
       _busy = true;
       _status = 'thinking';
       _turns = [..._turns, userTurn];
     });
-
     await _store.append(userTurn);
     unawaited(_safeSyncTurn(userTurn));
     unawaited(_safeEvent('chat_sent', payload: {'characters': text.length}));
@@ -180,7 +182,6 @@ class _MomAppState extends State<MomApp> {
         userText: text.trim(),
         knowledgeContext: knowledge,
       );
-
       final assistantTurn = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
@@ -191,16 +192,13 @@ class _MomAppState extends State<MomApp> {
           'knowledge_chars': knowledge.length,
         },
       );
-
       await _store.append(assistantTurn);
       if (mounted) {
         setState(() {
           _turns = [..._turns, assistantTurn];
-          _activeModel = reply.model;
           _status = 'online';
         });
       }
-
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
@@ -212,21 +210,22 @@ class _MomAppState extends State<MomApp> {
       final failure = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
-        content: 'I cannot reach my brain yet: $error',
+        content:
+            'Something between me and my brain is not answering. Try that again in a second.',
         createdAt: DateTime.now(),
         metadata: const {'local_error': true},
       );
-
       await _store.append(failure);
       if (mounted) {
         setState(() {
           _turns = [..._turns, failure];
-          _status = 'model unavailable';
+          _status = 'offline';
         });
       }
-      unawaited(_safeEvent('model_error', payload: {
-        'error_type': error.runtimeType.toString(),
-      }));
+      unawaited(_safeEvent(
+        'model_error',
+        payload: {'error_type': error.runtimeType.toString()},
+      ));
     } finally {
       client.close();
       if (mounted) setState(() => _busy = false);
@@ -237,7 +236,6 @@ class _MomAppState extends State<MomApp> {
     _sessionId = await _store.newSession();
     setState(() {
       _turns = [];
-      _activeModel = '';
       _status = 'online';
     });
     unawaited(_safeEvent('new_conversation'));
@@ -246,20 +244,17 @@ class _MomAppState extends State<MomApp> {
   Future<void> _openSettings() async {
     final current = _config;
     if (current == null) return;
-
     final updated = await Navigator.of(context).push<MomConfig>(
       MaterialPageRoute(
         builder: (_) => SettingsScreen(initial: current.copy()),
       ),
     );
     if (updated == null) return;
-
     await _configStore.save(updated);
     _sync?.close();
     _sync = MomSyncClient(syncUrl: updated.syncUrl);
     _config = updated;
     await _knowledge.load(repoRoot: updated.repoRoot);
-
     if (Platform.isLinux && updated.useLocalLlama) {
       final status = await _llama.ensureRunning(updated);
       _status = status.running ? 'online' : status.message;
@@ -271,7 +266,6 @@ class _MomAppState extends State<MomApp> {
     final config = _config;
     final sync = _sync;
     if (config == null || sync == null) return;
-
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DiagnosticsScreen(
@@ -322,7 +316,6 @@ class _MomAppState extends State<MomApp> {
         turns: _turns,
         busy: _busy,
         status: _status,
-        activeModel: _activeModel,
         onSend: _send,
         onSettings: _openSettings,
         onDiagnostics: _openDiagnostics,
@@ -345,7 +338,6 @@ class ChatScreen extends StatefulWidget {
     required this.turns,
     required this.busy,
     required this.status,
-    required this.activeModel,
     required this.onSend,
     required this.onSettings,
     required this.onDiagnostics,
@@ -355,7 +347,6 @@ class ChatScreen extends StatefulWidget {
   final List<ChatTurn> turns;
   final bool busy;
   final String status;
-  final String activeModel;
   final Future<void> Function(String) onSend;
   final VoidCallback onSettings;
   final VoidCallback onDiagnostics;
@@ -411,16 +402,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          if (widget.activeModel.isNotEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Text(
-                  widget.activeModel,
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-              ),
-            ),
           IconButton(
             tooltip: 'New conversation',
             onPressed: widget.onNewConversation,
@@ -446,7 +427,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Padding(
                       padding: EdgeInsets.all(32),
                       child: Text(
-                        'MOM is awake.\n\nText naturally. She can use the MOM repository as reference knowledge and keeps local conversation history.',
+                        'MOM is awake.\n\nTalk to me.',
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -459,7 +440,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       final turn = widget.turns[index];
                       final user = turn.role == 'user';
                       return Align(
-                        alignment: user ? Alignment.centerRight : Alignment.centerLeft,
+                        alignment: user
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
                         child: Container(
                           constraints: const BoxConstraints(maxWidth: 760),
                           margin: const EdgeInsets.only(bottom: 12),
@@ -472,11 +455,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ? Theme.of(context).colorScheme.primaryContainer
                                 : Theme.of(context).colorScheme.surfaceContainerHigh,
                             borderRadius: BorderRadius.circular(18).copyWith(
-                              bottomRight: user ? const Radius.circular(5) : null,
-                              bottomLeft: user ? null : const Radius.circular(5),
+                              bottomRight:
+                                  user ? const Radius.circular(5) : null,
+                              bottomLeft:
+                                  user ? null : const Radius.circular(5),
                             ),
                           ),
-                          child: SelectableText(turn.content),
+                          child: user
+                              ? SelectableText(turn.content)
+                              : MarkdownBody(
+                                  data: turn.content,
+                                  selectable: true,
+                                ),
                         ),
                       );
                     },
@@ -538,7 +528,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late MomConfig config;
   late final TextEditingController apiBase;
-  late final TextEditingController apiKey;
   late final TextEditingController model;
   late final TextEditingController modelsDir;
   late final TextEditingController repoRoot;
@@ -548,7 +537,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     config = widget.initial.copy();
     apiBase = TextEditingController(text: config.modelApiBase);
-    apiKey = TextEditingController(text: config.modelApiKey);
     model = TextEditingController(text: config.modelName);
     modelsDir = TextEditingController(text: config.modelsDir);
     repoRoot = TextEditingController(text: config.repoRoot);
@@ -557,7 +545,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     apiBase.dispose();
-    apiKey.dispose();
     model.dispose();
     modelsDir.dispose();
     repoRoot.dispose();
@@ -565,11 +552,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _save() {
-    config.modelApiBase = apiBase.text.trim();
-    config.modelApiKey = apiKey.text.trim();
-    config.modelName = model.text.trim();
-    config.modelsDir = modelsDir.text.trim();
-    config.repoRoot = repoRoot.text.trim();
+    if (Platform.isLinux) {
+      config.modelApiBase = apiBase.text.trim();
+      config.modelName = model.text.trim();
+      config.modelsDir = modelsDir.text.trim();
+      config.repoRoot = repoRoot.text.trim();
+    }
+    config.modelApiKey = '';
 
     final fatal = config.validate().where((i) => i.fatal).toList();
     if (fatal.isNotEmpty) {
@@ -593,61 +582,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(18),
         children: [
-          if (Platform.isLinux)
+          if (Platform.isLinux) ...[
             SwitchListTile(
-              title: const Text('Start local llama.cpp automatically'),
+              title: const Text('Use local MOM model'),
               subtitle: const Text(
-                'MOM starts the local router and discovers GGUF models without a terminal.',
+                'Run MOM through the local llama.cpp model service on this computer.',
               ),
               value: config.useLocalLlama,
               onChanged: (v) => setState(() => config.useLocalLlama = v),
             ),
-          TextField(
-            controller: apiBase,
-            decoration: const InputDecoration(
-              labelText: 'Model API URL',
-              helperText: 'Linux local default: http://127.0.0.1:8080/v1 · phones: use HTTPS hosted endpoint',
+            const SizedBox(height: 12),
+            TextField(
+              controller: apiBase,
+              decoration: const InputDecoration(
+                labelText: 'Local model endpoint',
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: model,
-            decoration: const InputDecoration(
-              labelText: 'Model name',
-              helperText: 'Leave blank to use the first model exposed by the endpoint.',
+            const SizedBox(height: 12),
+            TextField(
+              controller: model,
+              decoration: const InputDecoration(
+                labelText: 'Local model name',
+                helperText: 'Leave blank to use the first model exposed locally.',
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: apiKey,
-            obscureText: true,
-            enableSuggestions: false,
-            autocorrect: false,
-            decoration: const InputDecoration(
-              labelText: 'Model API key',
-              helperText: 'Stored in platform secure storage, never Supabase telemetry.',
-            ),
-          ),
-          if (Platform.isLinux) ...[
             const SizedBox(height: 12),
             TextField(
               controller: modelsDir,
-              decoration: const InputDecoration(labelText: 'GGUF model folder'),
+              decoration: const InputDecoration(
+                labelText: 'GGUF model folder',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: repoRoot,
               decoration: const InputDecoration(
                 labelText: 'Live MOM repository folder',
-                helperText: 'Desktop MOM reads supported text/code files here as reference knowledge.',
               ),
             ),
+            const Divider(height: 36),
           ],
-          const Divider(height: 36),
           SwitchListTile(
             title: const Text('Cloud conversation sync'),
             subtitle: const Text(
-              'Mirrors chats to MOM Supabase through the per-install device token.',
+              'Keep MOM conversation history available to her cloud memory.',
             ),
             value: config.cloudChatSync,
             onChanged: (v) => setState(() => config.cloudChatSync = v),
@@ -655,15 +633,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(
             title: const Text('Product/runtime data collection'),
             subtitle: const Text(
-              'Collects app launches, latency, model/error type, platform, and document counts. API keys are excluded.',
+              'Collect app performance and reliability data.',
             ),
             value: config.productTelemetry,
             onChanged: (v) => setState(() => config.productTelemetry = v),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Supabase sync: ${config.syncUrl}',
-            style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
       ),
@@ -722,7 +695,6 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                     : result.warning
                         ? Colors.amber
                         : Colors.red;
-
                 return ListTile(
                   leading: Icon(icon, color: color),
                   title: Text(result.name),
