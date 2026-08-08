@@ -10,6 +10,7 @@ on:
       - "learning_model/**"
       - "docs/**"
       - "tools/build_mom_knowledge.py"
+      - "tools/apply_mom_android_branding.py"
       - ".github/workflows/mom-native.yml"
   pull_request:
     branches: [main]
@@ -19,6 +20,7 @@ on:
       - "learning_model/**"
       - "docs/**"
       - "tools/build_mom_knowledge.py"
+      - "tools/apply_mom_android_branding.py"
       - ".github/workflows/mom-native.yml"
 
 permissions:
@@ -136,6 +138,7 @@ jobs:
           cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_android/pubspec.yaml"
           rm -rf "$RUNNER_TEMP/mom_android/assets"
           cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
+          python3 tools/apply_mom_android_branding.py "$RUNNER_TEMP/mom_android"
           python3 - <<'PY'
           from pathlib import Path
           p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")
