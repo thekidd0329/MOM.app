@@ -1,278 +1,386 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const U = Deno.env.get("SUPABASE_URL")!;
-const K = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const BRAIN_URL = `${U}/functions/v1/mom-brain`;
-const db = createClient(U, K, { auth: { persistSession: false, autoRefreshToken: false } });
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const BRAIN_URL = `${SUPABASE_URL}/functions/v1/mom-brain`;
+const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
-const C = {
+const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "content-type, x-mom-installation, x-mom-token",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const j = (s: number, v: unknown) => new Response(JSON.stringify(v), {
-  status: s,
-  headers: { ...C, "Content-Type": "application/json; charset=utf-8" },
-});
-const t = (v: unknown, n = 1000) => typeof v === "string" ? v.trim().slice(0, n) : "";
-const uuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 
-async function h(v: string) {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v));
-  return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+function json(status: number, value: unknown) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json; charset=utf-8" },
+  });
 }
 
-async function auth(req: Request) {
-  const id = req.headers.get("x-mom-installation") ?? "";
-  const q = req.headers.get("x-mom-token") ?? "";
-  if (!uuid(id) || q.length < 32) return null;
-  const { data } = await db.from("mom_installations")
-    .select("id,device_id,token_hash,revoked_at").eq("id", id).maybeSingle();
-  if (!data || data.revoked_at || await h(q) !== data.token_hash) return null;
+function safeText(value: unknown, max = 1000, fallback = "") {
+  return typeof value === "string" ? value.trim().slice(0, max) : fallback;
+}
+
+function safeError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  try { return JSON.stringify(error); } catch { return String(error); }
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function sha256(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+async function authenticate(req: Request) {
+  const installationId = req.headers.get("x-mom-installation") ?? "";
+  const token = req.headers.get("x-mom-token") ?? "";
+  if (!isUuid(installationId) || token.length < 32 || token.length > 256) return null;
+
+  const { data, error } = await db.from("mom_installations")
+    .select("id,device_id,token_hash,revoked_at")
+    .eq("id", installationId)
+    .maybeSingle();
+  if (error || !data || data.revoked_at) return null;
+  if (await sha256(token) !== data.token_hash) return null;
   return data;
 }
 
-function obj(v: unknown) {
-  if (typeof v !== "string") return v as any;
-  let s = v.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-  const a = s.indexOf("{");
-  const b = s.lastIndexOf("}");
-  if (a >= 0 && b > a) s = s.slice(a, b + 1);
-  return JSON.parse(s);
+function parseJsonObject(value: unknown) {
+  if (typeof value !== "string") return value as Record<string, unknown>;
+  let text = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) text = text.slice(first, last + 1);
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_json_output");
+  return parsed as Record<string, unknown>;
 }
 
-async function ask(req: Request, sys: string, prompt: string) {
-  const st = Date.now();
-  const installation = req.headers.get("x-mom-installation") ?? "";
-  const token = req.headers.get("x-mom-token") ?? "";
-  const r = await fetch(BRAIN_URL, {
+async function askBrain(req: Request, systemPrompt: string, userPrompt: string) {
+  const started = Date.now();
+  const response = await fetch(BRAIN_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-mom-installation": installation,
-      "x-mom-token": token,
+      "x-mom-installation": req.headers.get("x-mom-installation") ?? "",
+      "x-mom-token": req.headers.get("x-mom-token") ?? "",
     },
     body: JSON.stringify({
       action: "chat",
-      system_prompt: sys,
+      system_prompt: systemPrompt,
       history: [],
-      user_text: prompt,
+      user_text: userPrompt,
       knowledge_context: "",
       model: "",
       temperature: 0,
       max_history: 2,
     }),
   });
-  const rawBody = await r.text();
+
+  const rawBody = await response.text();
   let body: any = {};
   try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
-  if (!r.ok) throw new Error(`brain_${r.status}:${t(body?.error ?? rawBody, 300)}`);
-  const raw = t(body?.text, 12000);
-  if (!raw) throw new Error("empty_output");
+  if (!response.ok) {
+    throw new Error(`brain_${response.status}:${safeText(body?.error ?? rawBody, 300)}`);
+  }
+
+  const raw = safeText(body?.text, 12000);
+  if (!raw) throw new Error("empty_model_output");
   return {
-    data: obj(raw),
+    data: parseJsonObject(raw),
     raw,
-    model: t(body?.model, 300, "mom-brain"),
-    latency: Date.now() - st,
+    model: safeText(body?.model, 300, "mom-brain"),
+    latencyMs: Date.now() - started,
   };
 }
 
-const arr = (v: unknown) => Array.isArray(v)
-  ? v.filter((x) => typeof x === "string").map((x) => t(x, 600)).filter(Boolean).slice(0, 12)
-  : [];
-const key = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 220);
+function stringArray(value: unknown, maxItems = 12) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => typeof item === "string")
+    .map((item) => safeText(item, 600))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
 
-const EX = `You are MOM's silent data extraction parser. Analyze ONLY the user's current message, using recent messages only to resolve references. Output ONLY valid JSON exactly as {"core_emotions":[],"vulnerabilities":[],"life_details":[],"implicit_needs":[]}. Rules: Do not guess. Extract explicit current-message information. If no new data for a category, use []. Keep each item concise and atomic. Do not turn temporary states into permanent traits. vulnerabilities includes explicit substance use, risks, triggers, dangerous situations, instability, or wellbeing-relevant circumstances. life_details includes explicit names, relationships, places, routines, schedules, possessions, projects, commitments, preferences, or physical context. implicit_needs is the conservative immediate thing sought from MOM such as validation, reassurance, information, problem-solving, distraction, planning, emotional support, or venting. No prose or markdown.`;
+function normalizeFact(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 220);
+}
 
-const TM = `You are MOM's silent temporal/executive agent. Output ONLY valid JSON exactly as {"items":[]}. Convert ONLY explicit time-sensitive information into items shaped {"kind":"task|reminder|deadline|appointment|follow_up|event","title":"short title","detail":"optional","due_at":"ISO-8601 or null","time_text":"original wording or null","urgency":0.0,"importance":0.0}. Never invent dates, tasks, reminders, appointments, deadlines, or commitments. Resolve relative time only when clear from the supplied local current time. If ambiguous, preserve time_text and use null due_at. urgency is how soon action is needed; importance is how consequential the user presents it. Empty array if none.`;
+const extractorPrompt = `You are MOM's silent data extraction parser. Analyze ONLY the user's current message, using recent messages only to resolve references.
 
-const timey = (s: string) => /\b(today|tonight|tomorrow|yesterday|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|hour|minute|am|pm|deadline|due|appointment|remind|remember to|need to|have to|gotta|must|before|after|by \d|at \d|in \d)\b/i.test(s);
+Output ONLY valid JSON exactly as:
+{"core_emotions":[],"vulnerabilities":[],"life_details":[],"implicit_needs":[]}
 
-async function session(device: string, id: string) {
-  if (!uuid(id)) return null;
-  const { data } = await db.from("mom_chat_sessions").select("id")
-    .eq("id", id).eq("device_id", device).maybeSingle();
+Rules:
+1. Do not guess. Extract explicit current-message information.
+2. If no new data for a category, use [].
+3. Keep each item concise and atomic.
+4. Do not turn temporary states into permanent traits.
+5. vulnerabilities includes explicit substance use, risks, triggers, dangerous situations, instability, or wellbeing-relevant circumstances.
+6. life_details includes explicit names, relationships, places, routines, schedules, possessions, projects, commitments, preferences, or physical context.
+7. implicit_needs is the conservative immediate thing sought from MOM such as validation, reassurance, information, problem-solving, distraction, planning, emotional support, or venting.
+8. No prose or markdown.`;
+
+const temporalPrompt = `You are MOM's silent temporal/executive agent.
+
+Output ONLY valid JSON exactly as:
+{"items":[]}
+
+Each item may contain:
+{"kind":"task|reminder|deadline|appointment|follow_up|event","title":"short title","detail":"optional","due_at":"ISO-8601 or null","time_text":"original wording or null","urgency":0.0,"importance":0.0}
+
+Rules:
+1. Never invent dates, tasks, reminders, appointments, deadlines, or commitments.
+2. Resolve relative time only when clear from the supplied device-local current time and UTC offset.
+3. When due_at is known, include an ISO-8601 timezone offset matching the supplied UTC offset.
+4. If ambiguous, preserve time_text and use null due_at.
+5. urgency is how soon action is needed; importance is how consequential the user presents it.
+6. Empty array if none.
+7. No prose or markdown.`;
+
+function temporalLikely(text: string) {
+  return /\b(today|tonight|tomorrow|yesterday|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|hour|minute|am|pm|deadline|due|appointment|remind|remember to|need to|have to|gotta|must|before|after|by \d|at \d|in \d)\b/i.test(text);
+}
+
+async function ownedSessionId(deviceId: string, sessionId: string) {
+  if (!isUuid(sessionId)) return null;
+  const { data } = await db.from("mom_chat_sessions")
+    .select("id")
+    .eq("id", sessionId)
+    .eq("device_id", deviceId)
+    .maybeSingle();
   return data?.id ?? null;
 }
 
-async function recent(device: string, current: string) {
-  const { data } = await db.from("mom_chat_messages").select("content")
-    .eq("device_id", device).eq("role", "user")
-    .order("created_at", { ascending: false }).limit(6);
-  return (data ?? []).map((r: any) => t(r.content, 1200))
-    .filter((x: string) => x && x !== current).reverse();
+async function recentUserContext(deviceId: string, currentText: string) {
+  const { data } = await db.from("mom_chat_messages")
+    .select("content")
+    .eq("device_id", deviceId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(6);
+
+  return (data ?? [])
+    .map((row: any) => safeText(row.content, 1200))
+    .filter((text: string) => text && text !== currentText)
+    .reverse();
 }
 
-async function runProcess(req: Request, ins: any, body: any) {
-  const text = t(body.user_text, 50000);
-  if (!text) return j(400, { error: "empty_user_text" });
-  const sid = await session(ins.device_id, t(body.session_id, 64));
-  const prev = await recent(ins.device_id, text);
-  const prompt = `Recent user messages (reference only):\n${prev.map((x: string, i: number) => `${i + 1}. ${x}`).join("\n")}\n\nCURRENT USER MESSAGE:\n${text}`;
+async function processMessage(req: Request, installation: any, body: any) {
+  const text = safeText(body.user_text, 50000);
+  if (!text) return json(400, { error: "empty_user_text" });
 
-  const ex = await ask(req, EX, prompt);
-  const clean: any = {
-    core_emotions: arr(ex.data?.core_emotions),
-    vulnerabilities: arr(ex.data?.vulnerabilities),
-    life_details: arr(ex.data?.life_details),
-    implicit_needs: arr(ex.data?.implicit_needs),
+  const sessionId = await ownedSessionId(installation.device_id, safeText(body.session_id, 64));
+  const recent = await recentUserContext(installation.device_id, text);
+  const extractionInput = `Recent user messages (reference only):\n${recent.map((value: string, i: number) => `${i + 1}. ${value}`).join("\n")}\n\nCURRENT USER MESSAGE:\n${text}`;
+  const extractionRun = await askBrain(req, extractorPrompt, extractionInput);
+
+  const extraction: Record<string, string[]> = {
+    core_emotions: stringArray((extractionRun.data as any).core_emotions),
+    vulnerabilities: stringArray((extractionRun.data as any).vulnerabilities),
+    life_details: stringArray((extractionRun.data as any).life_details),
+    implicit_needs: stringArray((extractionRun.data as any).implicit_needs),
   };
-  const { data: er, error: ee } = await db.from("mom_context_extractions").insert({
-    device_id: ins.device_id,
-    session_id: sid,
-    raw_text: text,
-    extraction: clean,
-    model: ex.model,
-    input_characters: text.length,
-    output_characters: ex.raw.length,
-    latency_ms: ex.latency,
-  }).select("id").single();
-  if (ee) throw ee;
 
-  let facts = 0;
-  for (const cat of Object.keys(clean)) {
-    for (const value of clean[cat]) {
-      const k = key(value);
-      if (!k) continue;
+  const { data: extractionRow, error: extractionError } = await db.from("mom_context_extractions").insert({
+    device_id: installation.device_id,
+    session_id: sessionId,
+    raw_text: text,
+    extraction,
+    model: extractionRun.model,
+    input_characters: text.length,
+    output_characters: extractionRun.raw.length,
+    latency_ms: extractionRun.latencyMs,
+  }).select("id").single();
+  if (extractionError) throw new Error(`extraction_insert:${safeError(extractionError)}`);
+
+  let factsProduced = 0;
+  for (const [category, values] of Object.entries(extraction)) {
+    for (const value of values) {
+      const normalizedKey = normalizeFact(value);
+      if (!normalizedKey) continue;
       const { error } = await db.rpc("upsert_mom_profile_fact", {
-        p_device_id: ins.device_id,
-        p_category: cat,
-        p_normalized_key: k,
+        p_device_id: installation.device_id,
+        p_category: category,
+        p_normalized_key: normalizedKey,
         p_value: value,
         p_truth_state: "explicit",
         p_confidence: 1,
-        p_source_session_id: sid,
+        p_source_session_id: sessionId,
         p_source_excerpt: text.slice(0, 1200),
-        p_metadata: { extraction_id: er.id },
+        p_metadata: { extraction_id: extractionRow.id },
       });
-      if (!error) facts++;
+      if (error) throw new Error(`profile_upsert:${safeError(error)}`);
+      factsProduced++;
     }
   }
 
-  await db.from("mom_agent_runs").insert({
-    device_id: ins.device_id,
-    session_id: sid,
+  const { error: extractionRunError } = await db.from("mom_agent_runs").insert({
+    device_id: installation.device_id,
+    session_id: sessionId,
     agent: "context_extractor",
-    model: ex.model,
+    model: extractionRun.model,
     success: true,
     input_characters: text.length,
-    output_characters: ex.raw.length,
-    facts_produced: facts,
-    latency_ms: ex.latency,
-    metadata: { extraction_id: er.id },
+    output_characters: extractionRun.raw.length,
+    facts_produced: factsProduced,
+    latency_ms: extractionRun.latencyMs,
+    metadata: { extraction_id: extractionRow.id },
   });
+  if (extractionRunError) throw new Error(`extractor_run_insert:${safeError(extractionRunError)}`);
 
-  const items: any[] = [];
-  if (timey(text)) {
-    const now = t(body.local_now, 80) || new Date().toISOString();
-    const tr = await ask(req, TM, `LOCAL CURRENT TIME: ${now}\nCURRENT USER MESSAGE:\n${text}`);
-    const raw = Array.isArray(tr.data?.items) ? tr.data.items.slice(0, 8) : [];
-    for (const r of raw) {
-      const kind = t(r?.kind, 20);
-      const title = t(r?.title, 300);
+  const temporalItems: any[] = [];
+  if (temporalLikely(text)) {
+    const localNow = safeText(body.local_now, 80) || new Date().toISOString();
+    const offsetRaw = Number(body.utc_offset_minutes ?? 0);
+    const utcOffsetMinutes = Number.isFinite(offsetRaw)
+      ? Math.max(-840, Math.min(840, Math.trunc(offsetRaw)))
+      : 0;
+    const temporalInput = `DEVICE-LOCAL CURRENT TIME: ${localNow}\nUTC OFFSET MINUTES: ${utcOffsetMinutes}\nCURRENT USER MESSAGE:\n${text}`;
+    const temporalRun = await askBrain(req, temporalPrompt, temporalInput);
+    const rawItems = Array.isArray((temporalRun.data as any).items)
+      ? (temporalRun.data as any).items.slice(0, 8)
+      : [];
+
+    for (const raw of rawItems) {
+      const kind = safeText(raw?.kind, 20);
+      const title = safeText(raw?.title, 300);
       if (!title || !["task", "reminder", "deadline", "appointment", "follow_up", "event"].includes(kind)) continue;
-      const urgency = Math.max(0, Math.min(1, Number(r?.urgency ?? .5) || .5));
-      const importance = Math.max(0, Math.min(1, Number(r?.importance ?? .5) || .5));
-      const due = t(r?.due_at, 80);
-      const dueAt = due && !Number.isNaN(Date.parse(due)) ? new Date(due).toISOString() : null;
+
+      const urgency = Math.max(0, Math.min(1, Number(raw?.urgency ?? 0.5) || 0.5));
+      const importance = Math.max(0, Math.min(1, Number(raw?.importance ?? 0.5) || 0.5));
+      const dueText = safeText(raw?.due_at, 80);
+      const dueAt = dueText && !Number.isNaN(Date.parse(dueText)) ? new Date(dueText).toISOString() : null;
       const item = {
         kind,
         title,
-        detail: t(r?.detail, 1000) || null,
+        detail: safeText(raw?.detail, 1000) || null,
         due_at: dueAt,
-        time_text: t(r?.time_text, 200) || null,
+        time_text: safeText(raw?.time_text, 200) || null,
         urgency,
         importance,
       };
-      items.push(item);
-      await db.from("mom_temporal_items").insert({
-        device_id: ins.device_id,
-        session_id: sid,
-        extraction_id: er.id,
+
+      const { error } = await db.from("mom_temporal_items").insert({
+        device_id: installation.device_id,
+        session_id: sessionId,
+        extraction_id: extractionRow.id,
         ...item,
         source_excerpt: text.slice(0, 1200),
       });
+      if (error) throw new Error(`temporal_insert:${safeError(error)}`);
+      temporalItems.push(item);
     }
-    await db.from("mom_agent_runs").insert({
-      device_id: ins.device_id,
-      session_id: sid,
+
+    const { error } = await db.from("mom_agent_runs").insert({
+      device_id: installation.device_id,
+      session_id: sessionId,
       agent: "temporal",
-      model: tr.model,
+      model: temporalRun.model,
       success: true,
       input_characters: text.length,
-      output_characters: tr.raw.length,
-      temporal_items_produced: items.length,
-      latency_ms: tr.latency,
+      output_characters: temporalRun.raw.length,
+      temporal_items_produced: temporalItems.length,
+      latency_ms: temporalRun.latencyMs,
     });
+    if (error) throw new Error(`temporal_run_insert:${safeError(error)}`);
   }
 
-  return j(200, {
+  const dataPoints = factsProduced + temporalItems.length;
+  return json(200, {
     ok: true,
-    extraction_id: er.id,
-    extraction: clean,
-    facts_produced: facts,
-    temporal_items: items,
-    data_points: facts + items.length,
-    data_points_per_1000_chars: Number((((facts + items.length) * 1000) / Math.max(1, text.length)).toFixed(2)),
+    extraction_id: extractionRow.id,
+    extraction,
+    facts_produced: factsProduced,
+    temporal_items: temporalItems,
+    data_points: dataPoints,
+    data_points_per_1000_user_chars: Number(((dataPoints * 1000) / Math.max(1, text.length)).toFixed(2)),
   });
 }
 
-async function snapshot(ins: any) {
+async function snapshot(installation: any) {
   const [
     { count: facts },
-    { count: extracts },
-    { count: temporal },
-    { data: latest },
-    { data: open },
+    { count: extractionCount, data: extractionRows },
+    { count: temporalCount },
+    { data: latestFacts },
+    { data: openTemporal },
     { data: runs },
   ] = await Promise.all([
-    db.from("mom_profile_facts").select("*", { count: "exact", head: true }).eq("device_id", ins.device_id),
-    db.from("mom_context_extractions").select("*", { count: "exact", head: true }).eq("device_id", ins.device_id),
-    db.from("mom_temporal_items").select("*", { count: "exact", head: true }).eq("device_id", ins.device_id),
-    db.from("mom_profile_facts").select("category,value,truth_state,confidence,evidence_count,last_seen_at")
-      .eq("device_id", ins.device_id).order("last_seen_at", { ascending: false }).limit(30),
-    db.from("mom_temporal_items").select("kind,title,due_at,time_text,urgency,importance,status,created_at")
-      .eq("device_id", ins.device_id).eq("status", "open").order("created_at", { ascending: false }).limit(20),
-    db.from("mom_agent_runs").select("agent,input_characters,output_characters,facts_produced,temporal_items_produced,latency_ms,created_at")
-      .eq("device_id", ins.device_id).order("created_at", { ascending: false }).limit(100),
+    db.from("mom_profile_facts").select("*", { count: "exact", head: true }).eq("device_id", installation.device_id),
+    db.from("mom_context_extractions").select("input_characters", { count: "exact" }).eq("device_id", installation.device_id).limit(5000),
+    db.from("mom_temporal_items").select("*", { count: "exact", head: true }).eq("device_id", installation.device_id),
+    db.from("mom_profile_facts")
+      .select("category,value,truth_state,confidence,evidence_count,last_seen_at")
+      .eq("device_id", installation.device_id)
+      .order("last_seen_at", { ascending: false })
+      .limit(30),
+    db.from("mom_temporal_items")
+      .select("kind,title,due_at,time_text,urgency,importance,status,created_at")
+      .eq("device_id", installation.device_id)
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(20),
+    db.from("mom_agent_runs")
+      .select("agent,input_characters,output_characters,facts_produced,temporal_items_produced,latency_ms,created_at")
+      .eq("device_id", installation.device_id)
+      .order("created_at", { ascending: false })
+      .limit(100),
   ]);
-  const rr = runs ?? [];
-  const input = rr.reduce((s: number, r: any) => s + (r.input_characters || 0), 0);
-  const points = rr.reduce((s: number, r: any) => s + (r.facts_produced || 0) + (r.temporal_items_produced || 0), 0);
-  const lat = rr.filter((r: any) => Number.isFinite(r.latency_ms));
-  return j(200, {
+
+  const userInputCharacters = (extractionRows ?? [])
+    .reduce((sum: number, row: any) => sum + Number(row.input_characters ?? 0), 0);
+  const uniqueDataPoints = Number(facts ?? 0) + Number(temporalCount ?? 0);
+  const latencyRows = (runs ?? []).filter((row: any) => Number.isFinite(row.latency_ms));
+  const averageAgentLatencyMs = latencyRows.length
+    ? Math.round(latencyRows.reduce((sum: number, row: any) => sum + row.latency_ms, 0) / latencyRows.length)
+    : null;
+
+  return json(200, {
     ok: true,
     totals: {
       profile_facts: facts ?? 0,
-      extractions: extracts ?? 0,
-      temporal_items: temporal ?? 0,
-      agent_runs: rr.length,
-      input_characters: input,
-      data_points: points,
-      data_points_per_1000_chars: Number(((points * 1000) / Math.max(1, input)).toFixed(2)),
-      average_agent_latency_ms: lat.length ? Math.round(lat.reduce((s: number, r: any) => s + r.latency_ms, 0) / lat.length) : null,
+      extractions: extractionCount ?? 0,
+      temporal_items: temporalCount ?? 0,
+      agent_runs: (runs ?? []).length,
+      user_input_characters: userInputCharacters,
+      unique_data_points: uniqueDataPoints,
+      data_points_per_1000_user_chars: Number(((uniqueDataPoints * 1000) / Math.max(1, userInputCharacters)).toFixed(2)),
+      average_agent_latency_ms: averageAgentLatencyMs,
     },
-    latest_facts: latest ?? [],
-    open_temporal_items: open ?? [],
+    latest_facts: latestFacts ?? [],
+    open_temporal_items: openTemporal ?? [],
   });
 }
 
-async function cleanup(ins: any) {
-  if (!String(ins.device_id).startsWith("mom-ci-")) return j(403, { error: "test_cleanup_forbidden" });
-  for (const table of ["mom_agent_runs", "mom_temporal_items", "mom_profile_facts", "mom_context_extractions"]) {
-    const { error } = await db.from(table).delete().eq("device_id", ins.device_id);
-    if (error) throw error;
+async function cleanupTest(installation: any) {
+  if (!String(installation.device_id).startsWith("mom-ci-")) {
+    return json(403, { error: "test_cleanup_forbidden" });
   }
-  return j(200, { ok: true });
+  for (const table of ["mom_agent_runs", "mom_temporal_items", "mom_profile_facts", "mom_context_extractions"]) {
+    const { error } = await db.from(table).delete().eq("device_id", installation.device_id);
+    if (error) throw new Error(`cleanup_${table}:${safeError(error)}`);
+  }
+  return json(200, { ok: true });
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: C });
-  if (req.method !== "POST") return j(405, { error: "method_not_allowed" });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
+
   let body: any;
-  try { body = await req.json(); } catch { return j(400, { error: "invalid_json" }); }
-  const action = t(body?.action, 32);
+  try { body = await req.json(); } catch { return json(400, { error: "invalid_json" }); }
+  const action = safeText(body?.action, 32);
+
   if (action === "health") {
     const brain = await fetch(BRAIN_URL, {
       method: "POST",
@@ -281,23 +389,28 @@ Deno.serve(async (req: Request) => {
     });
     let data: any = {};
     try { data = await brain.json(); } catch {}
-    return j(200, {
+    return json(200, {
       ok: true,
       service: "mom-intelligence",
-      version: 3,
+      version: 5,
       configured: brain.ok && data?.configured === true,
       provider_path: "mom-brain",
+      efficiency_metric: "unique_data_points_per_1000_user_chars",
+      device_time_context: true,
     });
   }
-  const ins = await auth(req);
-  if (!ins) return j(401, { error: "invalid_installation_token" });
+
+  const installation = await authenticate(req);
+  if (!installation) return json(401, { error: "invalid_installation_token" });
+
   try {
-    if (action === "process") return await runProcess(req, ins, body);
-    if (action === "snapshot") return await snapshot(ins);
-    if (action === "cleanup_test") return await cleanup(ins);
-    return j(400, { error: "unknown_action" });
-  } catch (e) {
-    console.error("mom-intelligence", action, e);
-    return j(500, { error: "server_error", detail: e instanceof Error ? e.message : String(e) });
+    if (action === "process") return await processMessage(req, installation, body);
+    if (action === "snapshot") return await snapshot(installation);
+    if (action === "cleanup_test") return await cleanupTest(installation);
+    return json(400, { error: "unknown_action" });
+  } catch (error) {
+    const detail = safeError(error);
+    console.error("mom-intelligence", action, detail);
+    return json(500, { error: "server_error", detail });
   }
 });

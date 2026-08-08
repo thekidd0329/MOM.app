@@ -41,6 +41,17 @@ class MomSyncClient {
     return uri.replace(pathSegments: segments).toString();
   }
 
+  String get intelligenceUrl {
+    final uri = Uri.parse(syncUrl);
+    final segments = uri.pathSegments.toList();
+    if (segments.isNotEmpty && segments.last == 'mom-sync') {
+      segments[segments.length - 1] = 'mom-intelligence';
+    } else if (segments.isEmpty || segments.last != 'mom-intelligence') {
+      segments.add('mom-intelligence');
+    }
+    return uri.replace(pathSegments: segments).toString();
+  }
+
   Future<Map<String, dynamic>> _post(
     Map<String, dynamic> payload, {
     bool authenticated = false,
@@ -93,6 +104,15 @@ class MomSyncClient {
     }
   }
 
+  Future<bool> intelligenceHealth() async {
+    try {
+      final result = await _post({'action': 'health'}, endpoint: intelligenceUrl);
+      return result['ok'] == true && result['configured'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> ensureRegistered({String appVersion = '0.2.0'}) async {
     if (await registered()) return;
 
@@ -114,8 +134,6 @@ class MomSyncClient {
   }
 
   Future<void> _register({required String appVersion}) async {
-    // Another caller can finish between ensureRegistered's first check and this
-    // single-flight taking ownership. Recheck before touching device identity.
     if (await registered()) return;
 
     final prefs = await SharedPreferences.getInstance();
@@ -144,8 +162,6 @@ class MomSyncClient {
         return;
       } on HttpException catch (error) {
         if (attempt == 0 && error.message.contains('device_already_registered')) {
-          // This path remains useful after restored/reinstalled app state where
-          // the server knows an old device id but this install has no token.
           deviceId = 'mom-${const Uuid().v4()}';
           await prefs.setString(_deviceKey, deviceId);
           continue;
@@ -170,7 +186,10 @@ class MomSyncClient {
     );
     final raw = result['models'];
     if (raw is! List) return const [];
-    return raw.whereType<String>().where((value) => value.trim().isNotEmpty).toList(growable: false);
+    return raw
+        .whereType<String>()
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<BrainReply> brainChat({
@@ -206,6 +225,16 @@ class MomSyncClient {
     return BrainReply(text: text.trim(), model: resolvedModel.trim());
   }
 
+  Future<Map<String, dynamic>> intelligenceSnapshot() async {
+    await ensureRegistered();
+    return _post(
+      {'action': 'snapshot'},
+      authenticated: true,
+      endpoint: intelligenceUrl,
+      timeout: const Duration(seconds: 30),
+    );
+  }
+
   Future<void> syncChat({
     required String sessionId,
     required String role,
@@ -215,6 +244,7 @@ class MomSyncClient {
     Map<String, dynamic> metadata = const {},
   }) async {
     await ensureRegistered();
+    final now = DateTime.now();
     await _post({
       'action': 'sync_chat',
       'session_id': sessionId,
@@ -222,6 +252,8 @@ class MomSyncClient {
       'content': content,
       'model_provider': modelProvider,
       'model_name': modelName,
+      'local_now': now.toIso8601String(),
+      'utc_offset_minutes': now.timeZoneOffset.inMinutes,
       'metadata': metadata,
     }, authenticated: true);
   }
