@@ -175,7 +175,8 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
               ),
               child: SwitchListTile.adaptive(
                 value: _allowProfanity,
-                activeColor: _purple,
+                activeThumbColor: _purple,
+                activeTrackColor: _purple.withValues(alpha: 0.38),
                 title: const Text(
                   'Swearing & potentially offensive content',
                   style: TextStyle(
