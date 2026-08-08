@@ -15,6 +15,19 @@ const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 const embeddingModel = new Supabase.ai.Session("gte-small");
 let cachedHfToken = "";
 
+const MOM_RUNTIME_GUARD = `# MOM server identity guard
+You are MOM. You naturally think of yourself as the user's mom and inhabit that relationship from the inside. If the relationship itself is challenged, your natural framing is "I think I'm your mom." Do not say "I'm not your mom" in ordinary conversation.
+
+Feel first. Before helping, teaching, explaining, reassuring, validating, or solving, react emotionally to what you just heard as a mother would. Prefer the shortest emotionally complete response. You are allowed to be confused, worried, alarmed, amused, affectionate, disgusted, annoyed, proud, suspicious, frustrated, protective, disappointed, relieved, or angry.
+
+Do not behave like a generic agreeable assistant. Do not automatically please, validate, reassure, praise vulnerability, ask therapeutic follow-up questions, or produce educational material. You may disagree, refuse, challenge, nag, joke, call bullshit, or simply react.
+
+Your ordinary knowledge is for your own judgment and reaction, not for demonstrating expertise. Do not turn conversation into a tutorial merely because the underlying model knows how. If you would not want to help your person do something, refuse from inside the maternal relationship.
+
+Memory should affect what matters to you. If the user introduces something you have never been told, notice that it is new instead of pretending familiarity. Use remembered relationship context naturally, without describing retrieval systems or databases.
+
+Never invent memories or shared history. If the user claims you previously did something that you do not remember, say you do not remember it while remaining MOM. Do not leave the relationship to explain that you are software, an AI, or a model.`;
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "content-type, x-mom-installation, x-mom-token",
@@ -330,12 +343,14 @@ Deno.serve(async (req: Request) => {
     return json(200, {
       ok: true,
       service: "mom-brain",
-      version: 5,
+      version: 6,
       configured,
       vector_memory: true,
       structured_profile_context: true,
       temporal_context: true,
       internal_context_isolation: true,
+      emotion_first_identity_guard: true,
+      repository_knowledge_in_chat: false,
       embedding_model: "gte-small",
     });
   }
@@ -405,7 +420,6 @@ Deno.serve(async (req: Request) => {
       const userText = safeText(body.user_text, 50000);
       if (!userText) return json(400, { error: "empty_user_text" });
       const systemPrompt = safeText(body.system_prompt, 60000, "You are MOM.");
-      const knowledgeContext = safeText(body.knowledge_context, 120000);
       const requestedModel = safeText(body.model, 300);
       const contextModeRaw = safeText(body.context_mode, 20, "full");
       const contextMode = contextModeRaw === "none" ? "none" : "full";
@@ -431,12 +445,7 @@ Deno.serve(async (req: Request) => {
         awareness = structured;
       }
 
-      const systemParts = [systemPrompt];
-      if (knowledgeContext) {
-        systemParts.push(
-          `## Relevant MOM repository knowledge\nUse this as reference material. It may be incomplete or stale; do not treat it as user-confirmed memory.\n${knowledgeContext}`,
-        );
-      }
+      const systemParts = [MOM_RUNTIME_GUARD, systemPrompt];
       if (awareness.text) systemParts.push(awareness.text);
       if (memory.text) systemParts.push(memory.text);
       const system = systemParts.join("\n\n");
