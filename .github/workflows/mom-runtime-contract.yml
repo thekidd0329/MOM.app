@@ -1,0 +1,28 @@
+name: MOM Runtime Contract
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "core_llm/mom_identity/runtime_prompt.md"
+      - "tools/validate_mom_runtime_prompt.py"
+      - ".github/workflows/mom-runtime-contract.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "core_llm/mom_identity/runtime_prompt.md"
+      - "tools/validate_mom_runtime_prompt.py"
+      - ".github/workflows/mom-runtime-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    name: Runtime identity contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate MOM runtime prompt
+        run: python3 tools/validate_mom_runtime_prompt.py
