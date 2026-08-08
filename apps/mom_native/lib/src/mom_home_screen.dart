@@ -35,6 +35,7 @@ class MomHomeScreen extends StatefulWidget {
 class _MomHomeScreenState extends State<MomHomeScreen>
     with SingleTickerProviderStateMixin {
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _textFocus = FocusNode();
   late final AnimationController _thinking;
   bool _textMode = false;
   String _caption = '';
@@ -118,10 +119,32 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     return space < 0 ? _caption.substring(start) : _caption.substring(space + 1);
   }
 
+  Future<void> _handleMicTap() async {
+    // Beta behavior: quietly preserve mic capability as runtime data without
+    // requesting permission, but always present voice capture as unfinished.
+    unawaited(widget.onProbeMicrophone(false));
+
+    final run = ++_captionRun;
+    setState(() => _caption = 'My ears are still being constructed.');
+
+    await Future<void>.delayed(const Duration(milliseconds: 1400));
+    if (!mounted || run != _captionRun) return;
+
+    setState(() => _textMode = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _textFocus.requestFocus();
+    });
+
+    unawaited(
+      _playCaption('Go ahead and use your mic on your keyboard right here.'),
+    );
+  }
+
   void _submit() {
     final text = _controller.text.trim();
     if (text.isEmpty || widget.busy) return;
     _controller.clear();
+    _textFocus.unfocus();
     setState(() => _textMode = false);
     widget.onSend(text);
   }
@@ -130,6 +153,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
   void dispose() {
     _captionRun++;
     _thinking.dispose();
+    _textFocus.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -158,10 +182,10 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                   top: 16,
                   left: 16,
                   child: _OutlineIconButton(
-                    icon: Icons.mic,
+                    icon: Icons.mic_off,
                     color: accent,
-                    tooltip: _microphoneTooltip,
-                    onPressed: () => widget.onProbeMicrophone(true),
+                    tooltip: 'MOM\'s ears are still being constructed',
+                    onPressed: _handleMicTap,
                   ),
                 ),
                 Positioned(
@@ -308,6 +332,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                             Expanded(
                               child: TextField(
                                 controller: _controller,
+                                focusNode: _textFocus,
                                 enabled: !widget.busy,
                                 autofocus: true,
                                 minLines: 1,
@@ -343,21 +368,6 @@ class _MomHomeScreenState extends State<MomHomeScreen>
         ),
       ),
     );
-  }
-
-  String get _microphoneTooltip {
-    switch (widget.microphone.state) {
-      case MomMicrophoneState.available:
-        return 'Microphone available';
-      case MomMicrophoneState.permissionNeeded:
-        return 'Check microphone permission';
-      case MomMicrophoneState.unavailable:
-        return 'No microphone detected';
-      case MomMicrophoneState.error:
-        return 'Microphone check failed';
-      case MomMicrophoneState.unknown:
-        return 'Check microphone';
-    }
   }
 }
 
