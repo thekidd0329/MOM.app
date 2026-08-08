@@ -128,16 +128,16 @@ class MomPrivacyFilter {
     text = text.replaceAllMapped(
       RegExp(
         r"\b(?:my\s+name\s+is|i\s+am|i'm|call\s+me)\s+([A-Z][a-z]{1,30})(?:\s+[A-Z][a-z]{1,30})?\b",
+        caseSensitive: false,
       ),
       (match) {
         count++;
         kinds.add('person');
         final whole = match.group(0)!;
-        final name = match.group(1)!;
-        return whole.replaceFirst(name, '[PERSON]').replaceAll(
-              RegExp(r'\[PERSON\]\s+[A-Z][a-z]{1,30}$'),
-              '[PERSON]',
-            );
+        final firstName = match.group(1)!;
+        final prefixEnd = whole.toLowerCase().indexOf(firstName.toLowerCase());
+        if (prefixEnd < 0) return '[PERSON]';
+        return '${whole.substring(0, prefixEnd)}[PERSON]';
       },
     );
 
@@ -166,6 +166,20 @@ class MomPrivacyFilter {
     );
 
     text = text.replaceAllMapped(
+      RegExp(
+        r'(^|[.!?]\s+)([A-Z][a-z]{1,30})(?:\s+[A-Z][a-z]{1,30})?(?=\s+(?:said|told|asked|called|texted|messaged|thinks|thought|wants|wanted|needs|needed|is|was|has|had)\b)',
+        multiLine: true,
+      ),
+      (match) {
+        final candidate = match.group(2)!;
+        if (_safeCapitalizedWords.contains(candidate)) return match.group(0)!;
+        count++;
+        kinds.add('person');
+        return '${match.group(1)}[PERSON]';
+      },
+    );
+
+    text = text.replaceAllMapped(
       RegExp(r"\b([A-Z][a-z]{1,30})'s\b"),
       (match) {
         final word = match.group(1)!;
@@ -180,6 +194,18 @@ class MomPrivacyFilter {
       RegExp(
         r'\b((?:i\s+live|i\s+stay|i\s+am\s+staying|i\s+moved|we\s+live|we\s+moved|i\s+am\s+from|i\s+grew\s+up)\s+(?:in|at|near|to|from)\s+)([A-Z][A-Za-z.\-]*(?:\s+[A-Z][A-Za-z.\-]*){0,3})\b',
         caseSensitive: false,
+      ),
+      (match) {
+        count++;
+        kinds.add('location');
+        return '${match.group(1)}[LOCATION]';
+      },
+    );
+
+    text = text.replaceAllMapped(
+      RegExp(
+        r'(^|[.!?]\s+)([A-Z][A-Za-z.\-]*(?:\s+[A-Z][A-Za-z.\-]*){0,3})(?=\s+is\s+where\s+(?:i|we)\s+live\b)',
+        multiLine: true,
       ),
       (match) {
         count++;
