@@ -3,14 +3,15 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 
 import 'src/config.dart';
 import 'src/diagnostics.dart';
 import 'src/knowledge.dart';
 import 'src/llama_manager.dart';
 import 'src/local_store.dart';
+import 'src/mic_status.dart';
 import 'src/model_client.dart';
+import 'src/mom_home_screen.dart';
 import 'src/startup_discovery/discovery_models.dart';
 import 'src/startup_discovery/discovery_screen.dart';
 import 'src/startup_discovery/discovery_store.dart';
@@ -34,6 +35,7 @@ class _MomAppState extends State<MomApp> {
   final KnowledgeService _knowledge = KnowledgeService();
   final LlamaManager _llama = LlamaManager();
   final DiscoveryProgressStore _discoveryStore = DiscoveryProgressStore();
+  final MomMicrophoneProbe _micProbe = MomMicrophoneProbe();
 
   MomConfig? _config;
   MomSyncClient? _sync;
@@ -41,7 +43,9 @@ class _MomAppState extends State<MomApp> {
       'MOM exists to act in the direct best interest of her user; every response should serve that purpose.';
   String _sessionId = '';
   List<ChatTurn> _turns = [];
+  List<ChatTurn> _captionTurns = [];
   DiscoveryProgress _discovery = const DiscoveryProgress();
+  MomMicrophoneStatus _microphone = const MomMicrophoneStatus.unknown();
   bool _booting = true;
   bool _busy = false;
   String _status = 'starting';
@@ -69,6 +73,7 @@ class _MomAppState extends State<MomApp> {
       _sync = MomSyncClient(syncUrl: config.syncUrl);
       _sessionId = await _store.currentSessionId();
       _turns = await _store.loadSession(_sessionId, limit: 200);
+      _microphone = await _micProbe.probe();
 
       if (Platform.isLinux && config.useLocalLlama) {
         setState(() => _status = 'starting local brain');
@@ -85,6 +90,7 @@ class _MomAppState extends State<MomApp> {
           'local_llama': config.useLocalLlama,
           'startup_discovery_complete': _discovery.complete,
           'startup_discovery_answers': _discovery.answeredCount,
+          'microphone': _microphone.toJson(),
         }));
       }
     } catch (_) {
@@ -146,6 +152,15 @@ class _MomAppState extends State<MomApp> {
     }
   }
 
+  Future<void> _probeMicrophone(bool requestPermission) async {
+    final next = await _micProbe.probe(requestPermission: requestPermission);
+    if (mounted) setState(() => _microphone = next);
+    unawaited(_safeEvent('microphone_status', payload: {
+      'permission_requested': requestPermission,
+      ...next.toJson(),
+    }));
+  }
+
   Future<void> _send(String text) async {
     final config = _config;
     if (config == null || _busy || text.trim().isEmpty) return;
@@ -162,6 +177,10 @@ class _MomAppState extends State<MomApp> {
       role: 'user',
       content: text.trim(),
       createdAt: DateTime.now(),
+      metadata: {
+        'input_mode': 'text',
+        'microphone': _microphone.toJson(),
+      },
     );
     setState(() {
       _busy = true;
@@ -170,7 +189,11 @@ class _MomAppState extends State<MomApp> {
     });
     await _store.append(userTurn);
     unawaited(_safeSyncTurn(userTurn));
-    unawaited(_safeEvent('chat_sent', payload: {'characters': text.length}));
+    unawaited(_safeEvent('chat_sent', payload: {
+      'characters': text.length,
+      'input_mode': 'text',
+      'microphone': _microphone.toJson(),
+    }));
 
     final started = DateTime.now();
     final client = ModelClient(config.copy());
@@ -190,12 +213,16 @@ class _MomAppState extends State<MomApp> {
         metadata: {
           'model': reply.model,
           'knowledge_chars': knowledge.length,
+          'output_mode': 'orb_caption',
+          'caption_syllables_per_second': 2,
+          'caption_hold_seconds': 10,
         },
       );
       await _store.append(assistantTurn);
       if (mounted) {
         setState(() {
           _turns = [..._turns, assistantTurn];
+          _captionTurns = [..._captionTurns, assistantTurn];
           _status = 'online';
         });
       }
@@ -205,6 +232,7 @@ class _MomAppState extends State<MomApp> {
         'model': reply.model,
         'response_characters': reply.text.length,
         'knowledge_characters': knowledge.length,
+        'output_mode': 'orb_caption',
       }));
     } catch (error) {
       final failure = ChatTurn(
@@ -213,12 +241,16 @@ class _MomAppState extends State<MomApp> {
         content:
             'Something between me and my brain is not answering. Try that again in a second.',
         createdAt: DateTime.now(),
-        metadata: const {'local_error': true},
+        metadata: const {
+          'local_error': true,
+          'output_mode': 'orb_caption',
+        },
       );
       await _store.append(failure);
       if (mounted) {
         setState(() {
           _turns = [..._turns, failure];
+          _captionTurns = [..._captionTurns, failure];
           _status = 'offline';
         });
       }
@@ -230,15 +262,6 @@ class _MomAppState extends State<MomApp> {
       client.close();
       if (mounted) setState(() => _busy = false);
     }
-  }
-
-  Future<void> _newConversation() async {
-    _sessionId = await _store.newSession();
-    setState(() {
-      _turns = [];
-      _status = 'online';
-    });
-    unawaited(_safeEvent('new_conversation'));
   }
 
   Future<void> _openSettings() async {
@@ -285,13 +308,19 @@ class _MomAppState extends State<MomApp> {
   void dispose() {
     _sync?.close();
     _llama.stopIfStartedByMom();
+    unawaited(_micProbe.dispose());
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFFE46C7A),
+    const purple = Color(0xFFA855F7);
+    final lightScheme = ColorScheme.fromSeed(
+      seedColor: purple,
+      brightness: Brightness.light,
+    );
+    final darkScheme = ColorScheme.fromSeed(
+      seedColor: purple,
       brightness: Brightness.dark,
     );
 
@@ -312,206 +341,33 @@ class _MomAppState extends State<MomApp> {
     } else if (!_discovery.complete) {
       home = StartupDiscoveryScreen(onComplete: _completeDiscovery);
     } else {
-      home = ChatScreen(
-        turns: _turns,
+      home = MomHomeScreen(
+        turns: _captionTurns,
         busy: _busy,
         status: _status,
+        microphone: _microphone,
         onSend: _send,
         onSettings: _openSettings,
         onDiagnostics: _openDiagnostics,
-        onNewConversation: _newConversation,
+        onProbeMicrophone: _probeMicrophone,
       );
     }
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'MOM',
-      theme: ThemeData(colorScheme: scheme, useMaterial3: true),
+      themeMode: ThemeMode.system,
+      theme: ThemeData(
+        colorScheme: lightScheme,
+        useMaterial3: true,
+        scaffoldBackgroundColor: Colors.white,
+      ),
+      darkTheme: ThemeData(
+        colorScheme: darkScheme,
+        useMaterial3: true,
+        scaffoldBackgroundColor: Colors.black,
+      ),
       home: home,
-    );
-  }
-}
-
-class ChatScreen extends StatefulWidget {
-  const ChatScreen({
-    super.key,
-    required this.turns,
-    required this.busy,
-    required this.status,
-    required this.onSend,
-    required this.onSettings,
-    required this.onDiagnostics,
-    required this.onNewConversation,
-  });
-
-  final List<ChatTurn> turns;
-  final bool busy;
-  final String status;
-  final Future<void> Function(String) onSend;
-  final VoidCallback onSettings;
-  final VoidCallback onDiagnostics;
-  final VoidCallback onNewConversation;
-
-  @override
-  State<ChatScreen> createState() => _ChatScreenState();
-}
-
-class _ChatScreenState extends State<ChatScreen> {
-  final TextEditingController _controller = TextEditingController();
-  final ScrollController _scroll = ScrollController();
-
-  @override
-  void didUpdateWidget(covariant ChatScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.turns.length != widget.turns.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients) {
-          _scroll.animateTo(
-            _scroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final text = _controller.text.trim();
-    if (text.isEmpty || widget.busy) return;
-    _controller.clear();
-    widget.onSend(text);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('MOM', style: TextStyle(fontWeight: FontWeight.w800)),
-            Text(widget.status, style: Theme.of(context).textTheme.labelSmall),
-          ],
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'New conversation',
-            onPressed: widget.onNewConversation,
-            icon: const Icon(Icons.add_comment_outlined),
-          ),
-          IconButton(
-            tooltip: 'Diagnostics',
-            onPressed: widget.onDiagnostics,
-            icon: const Icon(Icons.monitor_heart_outlined),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: widget.onSettings,
-            icon: const Icon(Icons.settings_outlined),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: widget.turns.isEmpty
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Text(
-                        'MOM is awake.\n\nTalk to me.',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-                    itemCount: widget.turns.length,
-                    itemBuilder: (context, index) {
-                      final turn = widget.turns[index];
-                      final user = turn.role == 'user';
-                      return Align(
-                        alignment: user
-                            ? Alignment.centerRight
-                            : Alignment.centerLeft,
-                        child: Container(
-                          constraints: const BoxConstraints(maxWidth: 760),
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 15,
-                            vertical: 12,
-                          ),
-                          decoration: BoxDecoration(
-                            color: user
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : Theme.of(context).colorScheme.surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(18).copyWith(
-                              bottomRight:
-                                  user ? const Radius.circular(5) : null,
-                              bottomLeft:
-                                  user ? null : const Radius.circular(5),
-                            ),
-                          ),
-                          child: user
-                              ? SelectableText(turn.content)
-                              : MarkdownBody(
-                                  data: turn.content,
-                                  selectable: true,
-                                ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      enabled: !widget.busy,
-                      minLines: 1,
-                      maxLines: 6,
-                      textInputAction: TextInputAction.newline,
-                      decoration: const InputDecoration(
-                        hintText: 'Text MOM…',
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: (_) {
-                        if (!Platform.isAndroid && !Platform.isIOS) _submit();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: widget.busy ? null : _submit,
-                    icon: widget.busy
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.arrow_upward),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
