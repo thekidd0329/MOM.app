@@ -32,27 +32,22 @@ class MomSyncClient {
   static const _deviceKey = 'mom_device_id';
   static final Map<String, Future<void>> _registrationFlights = {};
 
-  String get brainUrl {
+  String _serviceUrl(String service) {
     final uri = Uri.parse(syncUrl);
     final segments = uri.pathSegments.toList();
     if (segments.isNotEmpty && segments.last == 'mom-sync') {
-      segments[segments.length - 1] = 'mom-brain';
-    } else if (segments.isEmpty || segments.last != 'mom-brain') {
-      segments.add('mom-brain');
+      segments[segments.length - 1] = service;
+    } else if (segments.isEmpty || segments.last != service) {
+      segments.add(service);
     }
     return uri.replace(pathSegments: segments).toString();
   }
 
-  String get intelligenceUrl {
-    final uri = Uri.parse(syncUrl);
-    final segments = uri.pathSegments.toList();
-    if (segments.isNotEmpty && segments.last == 'mom-sync') {
-      segments[segments.length - 1] = 'mom-intelligence';
-    } else if (segments.isEmpty || segments.last != 'mom-intelligence') {
-      segments.add('mom-intelligence');
-    }
-    return uri.replace(pathSegments: segments).toString();
-  }
+  String get brainUrl => _serviceUrl('mom-brain');
+
+  String get intelligenceUrl => _serviceUrl('mom-intelligence');
+
+  String get loginUrl => _serviceUrl('mom-login');
 
   Future<Map<String, dynamic>> _post(
     Map<String, dynamic> payload, {
@@ -110,6 +105,15 @@ class MomSyncClient {
     try {
       final result = await _post({'action': 'health'}, endpoint: intelligenceUrl);
       return result['ok'] == true && result['configured'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> loginHealth() async {
+    try {
+      final result = await _post({'action': 'health'}, endpoint: loginUrl);
+      return result['ok'] == true;
     } catch (_) {
       return false;
     }
@@ -173,6 +177,63 @@ class MomSyncClient {
   Future<bool> registered() async {
     return await _secure.read(key: _installationKey) != null &&
         await _secure.read(key: _tokenKey) != null;
+  }
+
+  Future<Map<String, dynamic>> loginStatus() async {
+    await ensureRegistered();
+    return _post(
+      {'action': 'status'},
+      authenticated: true,
+      endpoint: loginUrl,
+    );
+  }
+
+  Future<Map<String, dynamic>> createLoginTransferToken() async {
+    await ensureRegistered();
+    final result = await _post(
+      {
+        'action': 'create_transfer_token',
+        'privacy_acknowledged': true,
+      },
+      authenticated: true,
+      endpoint: loginUrl,
+    );
+    final token = result['transfer_token'];
+    final expiresAt = result['expires_at'];
+    if (token is! String || token.trim().isEmpty || expiresAt is! String) {
+      throw const FormatException('MOM login token response was incomplete.');
+    }
+    return result;
+  }
+
+  Future<Map<String, dynamic>> redeemLoginTransferToken(String transferToken) async {
+    final token = transferToken.trim();
+    if (token.isEmpty) {
+      throw const FormatException('Enter a MOM transfer code.');
+    }
+    await ensureRegistered();
+    final result = await _post(
+      {
+        'action': 'redeem_transfer_token',
+        'transfer_token': token,
+        'privacy_acknowledged': true,
+      },
+      authenticated: true,
+      endpoint: loginUrl,
+    );
+    if (result['linked'] != true) {
+      throw const FormatException('MOM login did not finish linking this device.');
+    }
+    return result;
+  }
+
+  Future<void> revokeLoginTransferTokens() async {
+    await ensureRegistered();
+    await _post(
+      {'action': 'revoke_transfer_tokens'},
+      authenticated: true,
+      endpoint: loginUrl,
+    );
   }
 
   Future<List<String>> brainModels() async {
