@@ -34,9 +34,12 @@ class MomHomeScreen extends StatefulWidget {
 
 class _MomHomeScreenState extends State<MomHomeScreen>
     with SingleTickerProviderStateMixin {
+  static const _purple = Color(0xFFA855F7);
+
   final TextEditingController _controller = TextEditingController();
   final FocusNode _textFocus = FocusNode();
   late final AnimationController _thinking;
+
   bool _textMode = false;
   String _caption = '';
   int _captionRun = 0;
@@ -84,7 +87,10 @@ class _MomHomeScreenState extends State<MomHomeScreen>
 
   Future<void> _playCaption(String text) async {
     final run = ++_captionRun;
-    final words = RegExp(r'\S+').allMatches(text).map((m) => m.group(0)!).toList();
+    final words = RegExp(r'\S+')
+        .allMatches(text)
+        .map((match) => match.group(0)!)
+        .toList(growable: false);
     if (words.isEmpty) return;
 
     var visible = '';
@@ -92,8 +98,9 @@ class _MomHomeScreenState extends State<MomHomeScreen>
       if (!mounted || run != _captionRun) return;
       visible = visible.isEmpty ? word : '$visible $word';
       setState(() => _caption = visible);
-      final syllables = _estimateSyllables(word);
-      await Future<void>.delayed(Duration(milliseconds: 500 * syllables));
+      await Future<void>.delayed(
+        Duration(milliseconds: 500 * _estimateSyllables(word)),
+      );
     }
 
     await Future<void>.delayed(const Duration(seconds: 10));
@@ -107,8 +114,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
         .replaceAll(RegExp(r'[^a-z]'), '')
         .replaceAll(RegExp(r'e$'), '');
     if (word.isEmpty) return 1;
-    final groups = RegExp(r'[aeiouy]+').allMatches(word).length;
-    return math.max(1, groups);
+    return math.max(1, RegExp(r'[aeiouy]+').allMatches(word).length);
   }
 
   String get _captionWindow {
@@ -116,14 +122,13 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     if (_caption.length <= maxChars) return _caption;
     final start = _caption.length - maxChars;
     final space = _caption.indexOf(' ', start);
-    return space < 0 ? _caption.substring(start) : _caption.substring(space + 1);
+    return space < 0
+        ? _caption.substring(start)
+        : _caption.substring(space + 1);
   }
 
   Future<void> _handleMicTap() async {
-    // Beta behavior: quietly preserve mic capability as runtime data without
-    // requesting permission, but always present voice capture as unfinished.
     unawaited(widget.onProbeMicrophone(false));
-
     final run = ++_captionRun;
     setState(() => _caption = 'My ears are still being constructed.');
 
@@ -134,10 +139,20 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _textFocus.requestFocus();
     });
-
     unawaited(
       _playCaption('Go ahead and use your mic on your keyboard right here.'),
     );
+  }
+
+  void _toggleTextMode() {
+    setState(() => _textMode = !_textMode);
+    if (_textMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _textFocus.requestFocus();
+      });
+    } else {
+      _textFocus.unfocus();
+    }
   }
 
   void _submit() {
@@ -160,19 +175,14 @@ class _MomHomeScreenState extends State<MomHomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final accent = scheme.primary;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final background = dark ? Colors.black : Colors.white;
-
     return Scaffold(
-      backgroundColor: background,
+      backgroundColor: Colors.black,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             final orbSize = math.min(
               constraints.maxWidth * 0.62,
-              constraints.maxHeight * 0.44,
+              constraints.maxHeight * 0.42,
             );
             final resolvedOrbSize = orbSize.clamp(180.0, 520.0).toDouble();
 
@@ -182,9 +192,8 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                   top: 16,
                   left: 16,
                   child: _OutlineIconButton(
-                    icon: Icons.mic_off,
-                    color: accent,
-                    tooltip: 'MOM\'s ears are still being constructed',
+                    icon: Icons.mic_none_rounded,
+                    tooltip: 'Talk to MOM',
                     onPressed: _handleMicTap,
                   ),
                 ),
@@ -194,8 +203,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                   child: GestureDetector(
                     onLongPress: widget.onDiagnostics,
                     child: _OutlineIconButton(
-                      icon: Icons.settings,
-                      color: accent,
+                      icon: Icons.settings_outlined,
                       tooltip: 'Settings',
                       onPressed: widget.onSettings,
                     ),
@@ -213,10 +221,10 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                           style: TextStyle(
                             fontSize: constraints.maxWidth < 500 ? 27 : 34,
                             fontWeight: FontWeight.w600,
-                            color: accent,
+                            color: _purple,
                             shadows: [
                               Shadow(
-                                color: accent.withOpacity(0.28),
+                                color: _purple.withValues(alpha: 0.28),
                                 blurRadius: 14,
                               ),
                             ],
@@ -225,11 +233,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                         const SizedBox(height: 24),
                         AnimatedBuilder(
                           animation: _thinking,
-                          child: _PlasmaOrb(
-                            size: resolvedOrbSize,
-                            accent: accent,
-                            lightMode: !dark,
-                          ),
+                          child: _PlasmaOrb(size: resolvedOrbSize),
                           builder: (context, child) {
                             final wave = widget.busy
                                 ? math.sin(_thinking.value * math.pi * 2)
@@ -262,14 +266,14 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                                     overflow: TextOverflow.fade,
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
-                                      color: accent,
+                                      color: _purple,
                                       fontSize:
                                           constraints.maxWidth < 500 ? 18 : 21,
                                       height: 1.28,
                                       fontWeight: FontWeight.w600,
                                       shadows: [
                                         Shadow(
-                                          color: accent.withOpacity(0.24),
+                                          color: _purple.withValues(alpha: 0.24),
                                           blurRadius: 10,
                                         ),
                                       ],
@@ -281,13 +285,13 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                     ),
                   ),
                 ),
-                Positioned(
+                const Positioned(
                   bottom: 28,
                   left: 24,
                   child: Text(
                     'Version 1.0.0',
                     style: TextStyle(
-                      color: accent,
+                      color: _purple,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -298,12 +302,12 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                   child: Container(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: accent, width: 2),
+                      border: Border.all(color: _purple, width: 2),
                     ),
                     child: IconButton(
                       tooltip: 'Text MOM',
-                      icon: Icon(Icons.keyboard, color: accent),
-                      onPressed: () => setState(() => _textMode = !_textMode),
+                      icon: const Icon(Icons.keyboard_alt_outlined, color: _purple),
+                      onPressed: _toggleTextMode,
                     ),
                   ),
                 ),
@@ -313,9 +317,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                     right: 16,
                     bottom: 78,
                     child: Material(
-                      color: dark
-                          ? const Color(0xF0141019)
-                          : const Color(0xF7FFFFFF),
+                      color: const Color(0xF0141019),
                       elevation: 12,
                       borderRadius: BorderRadius.circular(18),
                       child: Container(
@@ -323,7 +325,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: accent.withOpacity(0.72),
+                            color: _purple.withValues(alpha: 0.72),
                             width: 1.4,
                           ),
                         ),
@@ -337,9 +339,12 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                                 autofocus: true,
                                 minLines: 1,
                                 maxLines: 4,
+                                style: const TextStyle(color: Colors.white),
+                                cursorColor: _purple,
                                 textInputAction: TextInputAction.send,
                                 decoration: const InputDecoration(
                                   hintText: 'Text MOM…',
+                                  hintStyle: TextStyle(color: Colors.white54),
                                   border: InputBorder.none,
                                 ),
                                 onSubmitted: (_) => _submit(),
@@ -353,9 +358,10 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                                       height: 18,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
+                                        color: _purple,
                                       ),
                                     )
-                                  : Icon(Icons.arrow_upward, color: accent),
+                                  : const Icon(Icons.arrow_upward, color: _purple),
                             ),
                           ],
                         ),
@@ -374,32 +380,31 @@ class _MomHomeScreenState extends State<MomHomeScreen>
 class _OutlineIconButton extends StatelessWidget {
   const _OutlineIconButton({
     required this.icon,
-    required this.color,
     required this.onPressed,
     required this.tooltip,
   });
 
   final IconData icon;
-  final Color color;
   final VoidCallback onPressed;
   final String tooltip;
 
   @override
   Widget build(BuildContext context) {
+    const purple = Color(0xFFA855F7);
     return Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: color, width: 2),
+        border: Border.all(color: purple, width: 2),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.12),
+            color: purple.withValues(alpha: 0.12),
             blurRadius: 10,
           ),
         ],
       ),
       child: IconButton(
         tooltip: tooltip,
-        icon: Icon(icon, color: color),
+        icon: Icon(icon, color: purple),
         onPressed: onPressed,
       ),
     );
@@ -407,18 +412,13 @@ class _OutlineIconButton extends StatelessWidget {
 }
 
 class _PlasmaOrb extends StatelessWidget {
-  const _PlasmaOrb({
-    required this.size,
-    required this.accent,
-    required this.lightMode,
-  });
+  const _PlasmaOrb({required this.size});
 
   final double size;
-  final Color accent;
-  final bool lightMode;
 
   @override
   Widget build(BuildContext context) {
+    const purple = Color(0xFFA855F7);
     return SizedBox(
       width: size,
       height: size + 34,
@@ -435,8 +435,8 @@ class _PlasmaOrb extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
                 gradient: RadialGradient(
                   colors: [
-                    accent.withOpacity(lightMode ? 0.22 : 0.34),
-                    accent.withOpacity(0),
+                    purple.withValues(alpha: 0.34),
+                    purple.withValues(alpha: 0),
                   ],
                 ),
               ),
@@ -445,10 +445,7 @@ class _PlasmaOrb extends StatelessWidget {
           SizedBox.square(
             dimension: size,
             child: CustomPaint(
-              painter: _PlasmaOrbPainter(
-                accent: accent,
-                lightMode: lightMode,
-              ),
+              painter: const _PlasmaOrbPainter(),
             ),
           ),
         ],
@@ -458,13 +455,9 @@ class _PlasmaOrb extends StatelessWidget {
 }
 
 class _PlasmaOrbPainter extends CustomPainter {
-  const _PlasmaOrbPainter({
-    required this.accent,
-    required this.lightMode,
-  });
+  const _PlasmaOrbPainter();
 
-  final Color accent;
-  final bool lightMode;
+  static const purple = Color(0xFFA855F7);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -472,7 +465,7 @@ class _PlasmaOrbPainter extends CustomPainter {
     final radius = math.min(size.width, size.height) / 2 - 8;
 
     final glow = Paint()
-      ..color = accent.withOpacity(lightMode ? 0.24 : 0.38)
+      ..color = purple.withValues(alpha: 0.38)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.12);
     canvas.drawCircle(center, radius * 0.98, glow);
 
@@ -481,8 +474,8 @@ class _PlasmaOrbPainter extends CustomPainter {
         center: const Alignment(-0.08, -0.08),
         radius: 0.9,
         colors: [
-          const Color(0xFFFFFFFF),
-          accent.withOpacity(0.96),
+          Colors.white,
+          purple.withValues(alpha: 0.96),
           const Color(0xFF5B0FA3),
           const Color(0xFF170026),
         ],
@@ -491,23 +484,26 @@ class _PlasmaOrbPainter extends CustomPainter {
     canvas.drawCircle(center, radius, sphere);
 
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius)));
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius)),
+    );
 
     final branchPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = math.max(0.8, radius * 0.006)
-      ..color = const Color(0xFFE9C5FF).withOpacity(0.88)
+      ..color = const Color(0xFFE9C5FF).withValues(alpha: 0.88)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.005);
 
     final faintPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = math.max(0.55, radius * 0.0038)
-      ..color = accent.withOpacity(0.58);
+      ..color = purple.withValues(alpha: 0.58);
 
     for (var i = 0; i < 30; i++) {
-      final baseAngle = (math.pi * 2 * i / 30) + math.sin(i * 2.17) * 0.08;
+      final baseAngle =
+          (math.pi * 2 * i / 30) + math.sin(i * 2.17) * 0.08;
       final path = Path()..moveTo(center.dx, center.dy);
       var previous = center;
 
@@ -515,10 +511,11 @@ class _PlasmaOrbPainter extends CustomPainter {
         final fraction = step / 8;
         final jitter = math.sin((i + 1) * 12.91 + step * 4.73) * 0.11;
         final angle = baseAngle + jitter * fraction;
-        final r = radius * fraction * (0.96 + 0.03 * math.sin(i + step));
+        final distance =
+            radius * fraction * (0.96 + 0.03 * math.sin(i + step));
         final point = Offset(
-          center.dx + math.cos(angle) * r,
-          center.dy + math.sin(angle) * r,
+          center.dx + math.cos(angle) * distance,
+          center.dy + math.sin(angle) * distance,
         );
         path.lineTo(point.dx, point.dy);
 
@@ -557,11 +554,10 @@ class _PlasmaOrbPainter extends CustomPainter {
     final edge = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(1.6, radius * 0.008)
-      ..color = accent.withOpacity(0.82);
+      ..color = purple.withValues(alpha: 0.82);
     canvas.drawCircle(center, radius, edge);
   }
 
   @override
-  bool shouldRepaint(covariant _PlasmaOrbPainter oldDelegate) =>
-      oldDelegate.accent != accent || oldDelegate.lightMode != lightMode;
+  bool shouldRepaint(covariant _PlasmaOrbPainter oldDelegate) => false;
 }
