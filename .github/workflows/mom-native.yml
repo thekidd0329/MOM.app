@@ -63,7 +63,7 @@ jobs:
           channel: stable
           cache: true
       - name: Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev pulseaudio-utils ffmpeg
       - name: Build repository knowledge bundle
         run: python3 tools/build_mom_knowledge.py
       - name: Generate native Linux shell
@@ -92,7 +92,7 @@ jobs:
           Priority: optional
           Architecture: amd64
           Maintainer: MOM
-          Depends: libgtk-3-0, libsecret-1-0
+          Depends: libgtk-3-0, libsecret-1-0, pulseaudio-utils, ffmpeg
           Description: MOM native personal intelligence client
           EOF
           cat > "$ROOT/usr/share/applications/mom.desktop" <<'EOF'
@@ -140,8 +140,14 @@ jobs:
           from pathlib import Path
           p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")
           s = p.read_text()
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          permissions = []
           if 'android.permission.INTERNET' not in s:
-              s = s.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET" />')
+              permissions.append('    <uses-permission android:name="android.permission.INTERNET" />')
+          if 'android.permission.RECORD_AUDIO' not in s:
+              permissions.append('    <uses-permission android:name="android.permission.RECORD_AUDIO" />')
+          if permissions:
+              s = s.replace(marker, marker + '\n' + '\n'.join(permissions))
           p.write_text(s)
           PY
       - name: Build Android release APK
@@ -173,6 +179,15 @@ jobs:
           cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_ios/pubspec.yaml"
           rm -rf "$RUNNER_TEMP/mom_ios/assets"
           cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_ios/assets"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path(r"${{ runner.temp }}/mom_ios/ios/Runner/Info.plist")
+          s = p.read_text()
+          if 'NSMicrophoneUsageDescription' not in s:
+              insertion = '\n\t<key>NSMicrophoneUsageDescription</key>\n\t<string>MOM uses the microphone when you choose to talk with her.</string>\n'
+              s = s.replace('\n</dict>', insertion + '</dict>')
+          p.write_text(s)
+          PY
       - name: Compile iOS without code signing
         working-directory: ${{ runner.temp }}/mom_ios
         run: flutter pub get && flutter build ios --release --no-codesign
