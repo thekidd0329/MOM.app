@@ -15,6 +15,15 @@ MOM's initial learning primitive is:
 - `state/`: reserved runtime state partitions.
 - `examples/`: concrete expected behavior.
 - `evaluation/`: future learning quality measurements.
+- `proposed/`: behavior examples awaiting human review.
+- `approved/`: behavior examples explicitly approved for model teaching or regression evaluation.
+
+## Behavior teaching review
+Generated behavior examples always enter `proposed/` first. They are not training truth merely because another model produced them.
+
+After human review, approved examples move into `approved/`. The behavior dataset contract and SFT preparation tool live under `core_llm/learning_engine/` so the data queue is not duplicated.
+
+Behavior examples teach emotional instinct, relationship continuity, maternal judgment, boundaries, and response scale. They are not injected into live chat as lookup material. Their destination is model training and evaluation.
 
 ## Next implementation layer
 A runtime service should implement these operations without changing their semantics:
