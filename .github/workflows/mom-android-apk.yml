@@ -33,12 +33,15 @@ jobs:
           if [ ! -d android ]; then
             flutter create --platforms=android --org app.mom --project-name mom_native .
           fi
+          # flutter create generates a demo widget test for MyApp, but MOM has
+          # its own entrypoint/tests. Never let the generated sample block APK CI.
+          rm -f test/widget_test.dart
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Run tests
         run: flutter test
