@@ -182,7 +182,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
           builder: (context, constraints) {
             final orbSize = math.min(
               constraints.maxWidth * 0.62,
-              constraints.maxHeight * 0.44,
+              constraints.maxHeight * 0.42,
             );
             final resolvedOrbSize = orbSize.clamp(180.0, 520.0).toDouble();
 
