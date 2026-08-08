@@ -140,11 +140,12 @@ Each item may contain:
 
 Rules:
 1. Never invent dates, tasks, reminders, appointments, deadlines, or commitments.
-2. Resolve relative time only when clear from the supplied local current time.
-3. If ambiguous, preserve time_text and use null due_at.
-4. urgency is how soon action is needed; importance is how consequential the user presents it.
-5. Empty array if none.
-6. No prose or markdown.`;
+2. Resolve relative time only when clear from the supplied device-local current time and UTC offset.
+3. When due_at is known, include an ISO-8601 timezone offset matching the supplied UTC offset.
+4. If ambiguous, preserve time_text and use null due_at.
+5. urgency is how soon action is needed; importance is how consequential the user presents it.
+6. Empty array if none.
+7. No prose or markdown.`;
 
 function temporalLikely(text: string) {
   return /\b(today|tonight|tomorrow|yesterday|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|hour|minute|am|pm|deadline|due|appointment|remind|remember to|need to|have to|gotta|must|before|after|by \d|at \d|in \d)\b/i.test(text);
@@ -240,7 +241,12 @@ async function processMessage(req: Request, installation: any, body: any) {
   const temporalItems: any[] = [];
   if (temporalLikely(text)) {
     const localNow = safeText(body.local_now, 80) || new Date().toISOString();
-    const temporalRun = await askBrain(req, temporalPrompt, `LOCAL CURRENT TIME: ${localNow}\nCURRENT USER MESSAGE:\n${text}`);
+    const offsetRaw = Number(body.utc_offset_minutes ?? 0);
+    const utcOffsetMinutes = Number.isFinite(offsetRaw)
+      ? Math.max(-840, Math.min(840, Math.trunc(offsetRaw)))
+      : 0;
+    const temporalInput = `DEVICE-LOCAL CURRENT TIME: ${localNow}\nUTC OFFSET MINUTES: ${utcOffsetMinutes}\nCURRENT USER MESSAGE:\n${text}`;
+    const temporalRun = await askBrain(req, temporalPrompt, temporalInput);
     const rawItems = Array.isArray((temporalRun.data as any).items)
       ? (temporalRun.data as any).items.slice(0, 8)
       : [];
@@ -386,10 +392,11 @@ Deno.serve(async (req: Request) => {
     return json(200, {
       ok: true,
       service: "mom-intelligence",
-      version: 4,
+      version: 5,
       configured: brain.ok && data?.configured === true,
       provider_path: "mom-brain",
       efficiency_metric: "unique_data_points_per_1000_user_chars",
+      device_time_context: true,
     });
   }
 
