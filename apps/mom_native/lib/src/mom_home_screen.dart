@@ -76,15 +76,6 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     if (!mounted || run != _captionRun) return;
   }
 
-  int _estimateSyllables(String raw) {
-    final word = raw
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z]'), '')
-        .replaceAll(RegExp(r'e$'), '');
-    if (word.isEmpty) return 1;
-    final groups = RegExp(r'[aeiouy]+').allMatches(word).length;
-    return math.max(1, groups);
-  }
 
   String get _captionWindow {
     const maxChars = 260;
