@@ -56,21 +56,6 @@ jobs:
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           printf 'MOM Android APK\nversion=%s\ncommit=%s\n' "$APP_VERSION" "$GITHUB_SHA" > MOM_BUILD.txt
 
-          python3 - "$APP_VERSION" <<'PY'
-          from pathlib import Path
-          import sys
-
-          version = sys.argv[1]
-          source = Path('lib/src/mom_home_screen.dart')
-          text = source.read_text()
-          old = "'Version 1.0.0'"
-          if old not in text:
-              raise SystemExit('Expected MOM version badge marker was not found')
-          source.write_text(text.replace(old, f"'Version {version}'", 1))
-          PY
-
-          grep -F "'Version $APP_VERSION'" lib/src/mom_home_screen.dart
-
       - name: Build debug APK
         run: flutter build apk --debug
 
