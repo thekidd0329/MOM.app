@@ -55,13 +55,14 @@ jobs:
           print(uuid.uuid4())
           PY
           )"
-          payload="$(SESSION="$session" python3 - <<'PY'
+          message="I'm stressed because I have to deliver the MOM beta to Tyler tomorrow at 4 PM. Tyler is evaluating the beta and I need help prioritizing it."
+          payload="$(SESSION="$session" MESSAGE="$message" python3 - <<'PY'
           import json, os
           print(json.dumps({
             'action': 'sync_chat',
             'session_id': os.environ['SESSION'],
             'role': 'user',
-            'content': "I'm stressed because I have to deliver the MOM beta to Tyler tomorrow at 4 PM. Tyler is evaluating the beta and I need help prioritizing it.",
+            'content': os.environ['MESSAGE'],
             'metadata': {'ci_intelligence_proof': True}
           }))
           PY
@@ -73,11 +74,39 @@ jobs:
             -d "$payload" \
             "$MOM_SYNC_URL")"
           echo "$result"
+
+          ok="$(RESULT="$result" python3 - <<'PY'
+          import json, os
+          data=json.loads(os.environ['RESULT'])
+          print('1' if (data.get('intelligence') or {}).get('ok') is True else '0')
+          PY
+          )"
+          if [ "$ok" != "1" ]; then
+            diagnostic_payload="$(SESSION="$session" MESSAGE="$message" python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+            'action': 'process',
+            'session_id': os.environ['SESSION'],
+            'user_text': os.environ['MESSAGE'],
+            'local_now': '2026-08-07T17:40:00-07:00'
+          }))
+          PY
+          )"
+            echo 'DIRECT INTELLIGENCE DIAGNOSTIC:'
+            curl -sS -X POST \
+              -H 'content-type: application/json' \
+              -H "x-mom-installation: $INSTALLATION" \
+              -H "x-mom-token: $TOKEN" \
+              -d "$diagnostic_payload" \
+              "$MOM_INTELLIGENCE_URL"
+            echo
+            exit 1
+          fi
+
           RESULT="$result" python3 - <<'PY'
           import json, os
           data=json.loads(os.environ['RESULT'])
           intel=data.get('intelligence') or {}
-          assert intel.get('ok') is True, data
           assert int(intel.get('facts_produced', 0)) >= 1, data
           assert int(intel.get('data_points', 0)) >= 2, data
           assert int(intel.get('temporal_items', 0)) >= 1, data
