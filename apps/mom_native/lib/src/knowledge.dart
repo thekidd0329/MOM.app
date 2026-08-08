@@ -75,7 +75,8 @@ class KnowledgeService {
         final text = await entity.readAsString();
         if (text.trim().isEmpty) continue;
 
-        // Desktop live-repo content is authoritative over the bundled snapshot.
+        // Desktop live-repo content remains available for diagnostics and
+        // explicit developer tooling, but it is not injected into MOM chat.
         _entries.removeWhere((entry) => entry.path == relative);
         _entries.add(KnowledgeEntry(relative, text, live: true));
       } catch (_) {}
@@ -96,8 +97,6 @@ class KnowledgeService {
         score += count > 6 ? 6 : count;
       }
       if (score > 0) {
-        // A configured desktop repository is the freshest source. Relevant live
-        // hits should not be crowded out by older bundled copies or large docs.
         if (entry.live) score += 12;
         hits.add(KnowledgeHit(entry, score));
       }
@@ -106,16 +105,12 @@ class KnowledgeService {
     return hits.take(limit).toList(growable: false);
   }
 
-  String contextFor(String query, {int maxChars = 10000}) {
-    final buffer = StringBuffer();
-    for (final hit in search(query)) {
-      final chunk = hit.entry.text.length > 2200 ? hit.entry.text.substring(0, 2200) : hit.entry.text;
-      final addition = '\n\nSOURCE: ${hit.entry.path}\n$chunk';
-      if (buffer.length + addition.length > maxChars) break;
-      buffer.write(addition);
-    }
-    return buffer.toString().trim();
-  }
+  /// MOM's ordinary conversation must come from her own model knowledge,
+  /// relationship memory, and emotional judgment. Repository documents are
+  /// developer knowledge, not something she silently looks up while talking.
+  /// Keep this empty unless an explicit product feature deliberately requests
+  /// repository lookup in the future.
+  String contextFor(String query, {int maxChars = 10000}) => '';
 
   static Set<String> _tokens(String value) => RegExp(r'[A-Za-z0-9_]{3,}')
       .allMatches(value.toLowerCase())
