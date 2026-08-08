@@ -32,11 +32,9 @@ class MomHomeScreen extends StatefulWidget {
   State<MomHomeScreen> createState() => _MomHomeScreenState();
 }
 
-class _MomHomeScreenState extends State<MomHomeScreen>
-    with SingleTickerProviderStateMixin {
+class _MomHomeScreenState extends State<MomHomeScreen> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _textFocus = FocusNode();
-  late final AnimationController _thinking;
   bool _textMode = false;
   String _caption = '';
   int _captionRun = 0;
@@ -45,29 +43,14 @@ class _MomHomeScreenState extends State<MomHomeScreen>
   @override
   void initState() {
     super.initState();
-    _thinking = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-    _syncThinking();
     _maybeStartLatestCaption();
   }
 
   @override
   void didUpdateWidget(covariant MomHomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.busy != widget.busy) _syncThinking();
     if (oldWidget.turns.length != widget.turns.length) {
       _maybeStartLatestCaption();
-    }
-  }
-
-  void _syncThinking() {
-    if (widget.busy) {
-      if (!_thinking.isAnimating) _thinking.repeat();
-    } else {
-      _thinking.stop();
-      _thinking.value = 0;
     }
   }
 
@@ -120,8 +103,6 @@ class _MomHomeScreenState extends State<MomHomeScreen>
   }
 
   Future<void> _handleMicTap() async {
-    // Beta behavior: quietly preserve mic capability as runtime data without
-    // requesting permission, but always present voice capture as unfinished.
     unawaited(widget.onProbeMicrophone(false));
 
     final run = ++_captionRun;
@@ -152,7 +133,6 @@ class _MomHomeScreenState extends State<MomHomeScreen>
   @override
   void dispose() {
     _captionRun++;
-    _thinking.dispose();
     _textFocus.dispose();
     _controller.dispose();
     super.dispose();
@@ -223,25 +203,11 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                           ),
                         ),
                         const SizedBox(height: 24),
-                        AnimatedBuilder(
-                          animation: _thinking,
-                          child: _PlasmaOrb(
-                            size: resolvedOrbSize,
-                            accent: accent,
-                            lightMode: !dark,
-                          ),
-                          builder: (context, child) {
-                            final wave = widget.busy
-                                ? math.sin(_thinking.value * math.pi * 2)
-                                : 0.0;
-                            return Transform.translate(
-                              offset: Offset(0, -14 * wave.abs()),
-                              child: Transform.scale(
-                                scale: 1 + (widget.busy ? 0.025 * wave : 0),
-                                child: child,
-                              ),
-                            );
-                          },
+                        _ElectricOrb(
+                          size: resolvedOrbSize,
+                          accent: accent,
+                          lightMode: !dark,
+                          energized: widget.busy,
                         ),
                         const SizedBox(height: 18),
                         AnimatedSwitcher(
@@ -285,7 +251,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                   bottom: 28,
                   left: 24,
                   child: Text(
-                    'Version 1.0.0',
+                    'MOM Beta 0.4',
                     style: TextStyle(
                       color: accent,
                       fontWeight: FontWeight.w600,
@@ -406,48 +372,87 @@ class _OutlineIconButton extends StatelessWidget {
   }
 }
 
-class _PlasmaOrb extends StatelessWidget {
-  const _PlasmaOrb({
+class _ElectricOrb extends StatefulWidget {
+  const _ElectricOrb({
     required this.size,
     required this.accent,
     required this.lightMode,
+    required this.energized,
   });
 
   final double size;
   final Color accent;
   final bool lightMode;
+  final bool energized;
+
+  @override
+  State<_ElectricOrb> createState() => _ElectricOrbState();
+}
+
+class _ElectricOrbState extends State<_ElectricOrb>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _rotation;
+
+  @override
+  void initState() {
+    super.initState();
+    _rotation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 5200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _rotation.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: size,
-      height: size + 34,
+      width: widget.size,
+      height: widget.size + 34,
       child: Stack(
         alignment: Alignment.topCenter,
         clipBehavior: Clip.none,
         children: [
           Positioned(
-            top: size - 8,
-            child: Container(
-              width: size * 0.58,
-              height: 24,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                gradient: RadialGradient(
-                  colors: [
-                    accent.withOpacity(lightMode ? 0.22 : 0.34),
-                    accent.withOpacity(0),
-                  ],
-                ),
-              ),
+            top: widget.size - 8,
+            child: AnimatedBuilder(
+              animation: _rotation,
+              builder: (context, _) {
+                final pulse = 0.5 +
+                    0.5 * math.sin(_rotation.value * math.pi * 4);
+                return Container(
+                  width: widget.size * (0.52 + 0.08 * pulse),
+                  height: 24,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    gradient: RadialGradient(
+                      colors: [
+                        widget.accent.withOpacity(
+                          widget.lightMode ? 0.15 + 0.08 * pulse : 0.25 + 0.12 * pulse,
+                        ),
+                        widget.accent.withOpacity(0),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           SizedBox.square(
-            dimension: size,
-            child: CustomPaint(
-              painter: _PlasmaOrbPainter(
-                accent: accent,
-                lightMode: lightMode,
+            dimension: widget.size,
+            child: AnimatedBuilder(
+              animation: _rotation,
+              builder: (context, _) => CustomPaint(
+                painter: _ElectricOrbPainter(
+                  accent: widget.accent,
+                  lightMode: widget.lightMode,
+                  phase: _rotation.value,
+                  energized: widget.energized,
+                ),
               ),
             ),
           ),
@@ -457,111 +462,202 @@ class _PlasmaOrb extends StatelessWidget {
   }
 }
 
-class _PlasmaOrbPainter extends CustomPainter {
-  const _PlasmaOrbPainter({
+class _ElectricOrbPainter extends CustomPainter {
+  const _ElectricOrbPainter({
     required this.accent,
     required this.lightMode,
+    required this.phase,
+    required this.energized,
   });
 
   final Color accent;
   final bool lightMode;
+  final double phase;
+  final bool energized;
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width, size.height) / 2 - 8;
+    final radius = math.min(size.width, size.height) / 2 - 10;
+    final spin = phase * math.pi * 2;
+    final pulse = 0.5 + 0.5 * math.sin(spin * 2.3);
+    final heat = energized ? 1.0 : 0.72;
 
-    final glow = Paint()
-      ..color = accent.withOpacity(lightMode ? 0.24 : 0.38)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.12);
-    canvas.drawCircle(center, radius * 0.98, glow);
+    final outerGlow = Paint()
+      ..color = accent.withOpacity(
+        (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
+      )
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.18);
+    canvas.drawCircle(center, radius * (0.98 + 0.025 * pulse), outerGlow);
 
-    final sphere = Paint()
+    final body = Paint()
       ..shader = RadialGradient(
-        center: const Alignment(-0.08, -0.08),
-        radius: 0.9,
+        center: const Alignment(-0.18, -0.22),
+        radius: 1.05,
         colors: [
-          const Color(0xFFFFFFFF),
-          accent.withOpacity(0.96),
+          Colors.white.withOpacity(lightMode ? 0.97 : 0.93),
+          const Color(0xFFE9C5FF).withOpacity(0.98),
+          accent.withOpacity(0.94),
           const Color(0xFF5B0FA3),
-          const Color(0xFF170026),
+          const Color(0xFF140020),
         ],
-        stops: const [0.0, 0.08, 0.46, 1.0],
+        stops: const [0.0, 0.07, 0.28, 0.66, 1.0],
       ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, sphere);
+    canvas.drawCircle(center, radius, body);
 
     canvas.save();
     canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius)));
 
-    final branchPaint = Paint()
+    final deepGlow = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          accent.withOpacity(0.14 + 0.08 * pulse),
+          const Color(0x00140020),
+        ],
+      ).createShader(Rect.fromCircle(center: center, radius: radius * 0.88));
+    canvas.drawCircle(center, radius * 0.9, deepGlow);
+
+    final ringPaintBack = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(0.8, radius * 0.005)
+      ..color = accent.withOpacity(lightMode ? 0.20 : 0.28);
+    final ringPaintFront = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(1.0, radius * 0.007)
+      ..color = const Color(0xFFF5E6FF).withOpacity(0.32 + 0.12 * pulse)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
+
+    for (var r = 0; r < 4; r++) {
+      final tilt = -0.62 + r * 0.38;
+      final rect = Rect.fromCenter(
+        center: center,
+        width: radius * 1.76,
+        height: radius * (0.36 + r * 0.11),
+      );
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(tilt + spin * (r.isEven ? 0.055 : -0.045));
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawArc(rect, math.pi, math.pi, false, ringPaintBack);
+      canvas.drawArc(rect, 0, math.pi, false, ringPaintFront);
+      canvas.restore();
+    }
+
+    final faint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = math.max(0.8, radius * 0.006)
-      ..color = const Color(0xFFE9C5FF).withOpacity(0.88)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.005);
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = math.max(0.55, radius * 0.004)
+      ..color = accent.withOpacity(0.48 * heat);
 
-    final faintPaint = Paint()
+    final hot = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = math.max(0.55, radius * 0.0038)
-      ..color = accent.withOpacity(0.58);
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = math.max(1.0, radius * 0.007)
+      ..color = const Color(0xFFF8EEFF).withOpacity(0.88 * heat)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
-    for (var i = 0; i < 30; i++) {
-      final baseAngle = (math.pi * 2 * i / 30) + math.sin(i * 2.17) * 0.08;
-      final path = Path()..moveTo(center.dx, center.dy);
-      var previous = center;
+    final filamentCount = energized ? 34 : 26;
+    for (var i = 0; i < filamentCount; i++) {
+      final seed = i * 12.9898;
+      final rotationRate = i.isEven ? 1.0 : -0.72;
+      final base = spin * rotationRate +
+          math.pi * 2 * i / filamentCount +
+          0.18 * math.sin(seed);
+      final path = Path();
+      Offset? previous;
 
-      for (var step = 1; step <= 8; step++) {
-        final fraction = step / 8;
-        final jitter = math.sin((i + 1) * 12.91 + step * 4.73) * 0.11;
-        final angle = baseAngle + jitter * fraction;
-        final r = radius * fraction * (0.96 + 0.03 * math.sin(i + step));
+      for (var step = 0; step <= 11; step++) {
+        final t = step / 11;
+        final radial = radius * (0.06 + 0.91 * t);
+        final curl =
+            0.72 * math.sin(t * math.pi) * math.sin(seed * 0.7 + spin * 1.6);
+        final jitter =
+            0.075 * math.sin(seed + step * 4.73 + spin * (2.0 + (i % 3)));
+        final angle = base + curl + jitter;
+        final depth = math.sin(base + t * 1.4 + spin * 0.22);
+        final squash = 0.72 + 0.18 * depth;
         final point = Offset(
-          center.dx + math.cos(angle) * r,
-          center.dy + math.sin(angle) * r,
+          center.dx + math.cos(angle) * radial,
+          center.dy + math.sin(angle) * radial * squash,
         );
-        path.lineTo(point.dx, point.dy);
 
-        if (step == 4 || step == 6) {
-          final branchAngle = angle + (i.isEven ? 0.28 : -0.28);
-          final branchLength = radius * (step == 4 ? 0.22 : 0.15);
-          final branchEnd = Offset(
+        if (step == 0) {
+          path.moveTo(point.dx, point.dy);
+        } else {
+          path.lineTo(point.dx, point.dy);
+        }
+
+        if (previous != null && (step == 6 || step == 8) && i % 3 == 0) {
+          final branchAngle = angle + (i.isEven ? 0.34 : -0.34);
+          final branchLength = radius * (step == 6 ? 0.18 : 0.12);
+          final end = Offset(
             point.dx + math.cos(branchAngle) * branchLength,
-            point.dy + math.sin(branchAngle) * branchLength,
+            point.dy + math.sin(branchAngle) * branchLength * 0.72,
           );
           final branch = Path()
             ..moveTo(previous.dx, previous.dy)
-            ..quadraticBezierTo(
-              point.dx,
-              point.dy,
-              branchEnd.dx,
-              branchEnd.dy,
-            );
-          canvas.drawPath(branch, faintPaint);
+            ..quadraticBezierTo(point.dx, point.dy, end.dx, end.dy);
+          canvas.drawPath(branch, faint);
         }
         previous = point;
       }
-      canvas.drawPath(path, i % 3 == 0 ? branchPaint : faintPaint);
+
+      final facing = 0.5 + 0.5 * math.cos(base + spin * 0.12);
+      if (i % 4 == 0 || facing > 0.78) {
+        canvas.drawPath(path, hot);
+      } else {
+        canvas.drawPath(path, faint);
+      }
     }
 
-    final centerGlow = Paint()
-      ..shader = const RadialGradient(
-        colors: [Colors.white, Color(0xFFEBD2FF), Color(0x00FFFFFF)],
+    final core = Paint()
+      ..shader = RadialGradient(
+        colors: [
+          Colors.white.withOpacity(0.98),
+          const Color(0xFFF3DEFF).withOpacity(0.92),
+          accent.withOpacity(0.55),
+          accent.withOpacity(0),
+        ],
+        stops: const [0.0, 0.22, 0.52, 1.0],
       ).createShader(
-        Rect.fromCircle(center: center, radius: radius * 0.16),
+        Rect.fromCircle(
+          center: center,
+          radius: radius * (0.22 + 0.035 * pulse),
+        ),
       );
-    canvas.drawCircle(center, radius * 0.16, centerGlow);
+    canvas.drawCircle(center, radius * (0.22 + 0.035 * pulse), core);
 
     canvas.restore();
 
+    final rimGlow = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(4.0, radius * 0.035)
+      ..color = accent.withOpacity((lightMode ? 0.12 : 0.20) * heat)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05);
+    canvas.drawCircle(center, radius, rimGlow);
+
     final edge = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(1.6, radius * 0.008)
-      ..color = accent.withOpacity(0.82);
+      ..strokeWidth = math.max(1.2, radius * 0.009)
+      ..shader = SweepGradient(
+        transform: GradientRotation(spin),
+        colors: [
+          accent.withOpacity(0.35),
+          const Color(0xFFF4E4FF).withOpacity(0.95),
+          accent.withOpacity(0.45),
+          const Color(0xFF7D26C9).withOpacity(0.75),
+          accent.withOpacity(0.35),
+        ],
+      ).createShader(Rect.fromCircle(center: center, radius: radius));
     canvas.drawCircle(center, radius, edge);
   }
 
   @override
-  bool shouldRepaint(covariant _PlasmaOrbPainter oldDelegate) =>
-      oldDelegate.accent != accent || oldDelegate.lightMode != lightMode;
+  bool shouldRepaint(covariant _ElectricOrbPainter oldDelegate) =>
+      oldDelegate.phase != phase ||
+      oldDelegate.accent != accent ||
+      oldDelegate.lightMode != lightMode ||
+      oldDelegate.energized != energized;
 }
