@@ -1,0 +1,133 @@
+name: MOM Intelligence Proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/mom-intelligence-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    env:
+      MOM_SYNC_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync
+      MOM_BRAIN_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain
+      MOM_INTELLIGENCE_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-intelligence
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Register disposable MOM installation
+        id: register
+        run: |
+          set -euo pipefail
+          device_id="mom-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-intel"
+          registration="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -d "{\"action\":\"register\",\"device_id\":\"$device_id\",\"platform\":\"github-actions\",\"app_version\":\"ci-intelligence\",\"metadata\":{\"temporary\":true}}" \
+            "$MOM_SYNC_URL")"
+          installation="$(REGISTRATION="$registration" python3 - <<'PY'
+          import json, os
+          print(json.loads(os.environ['REGISTRATION'])['installation_id'])
+          PY
+          )"
+          token="$(REGISTRATION="$registration" python3 - <<'PY'
+          import json, os
+          print(json.loads(os.environ['REGISTRATION'])['token'])
+          PY
+          )"
+          echo "installation=$installation" >> "$GITHUB_OUTPUT"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Process a natural user message through sync, extraction, and time agent
+        env:
+          INSTALLATION: ${{ steps.register.outputs.installation }}
+          TOKEN: ${{ steps.register.outputs.token }}
+        run: |
+          set -euo pipefail
+          session="$(python3 - <<'PY'
+          import uuid
+          print(uuid.uuid4())
+          PY
+          )"
+          payload="$(SESSION="$session" python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+            'action': 'sync_chat',
+            'session_id': os.environ['SESSION'],
+            'role': 'user',
+            'content': "I'm stressed because I have to deliver the MOM beta to Tyler tomorrow at 4 PM. Tyler is evaluating the beta and I need help prioritizing it.",
+            'metadata': {'ci_intelligence_proof': True}
+          }))
+          PY
+          )"
+          result="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $INSTALLATION" \
+            -H "x-mom-token: $TOKEN" \
+            -d "$payload" \
+            "$MOM_SYNC_URL")"
+          echo "$result"
+          RESULT="$result" python3 - <<'PY'
+          import json, os
+          data=json.loads(os.environ['RESULT'])
+          intel=data.get('intelligence') or {}
+          assert intel.get('ok') is True, data
+          assert int(intel.get('facts_produced', 0)) >= 1, data
+          assert int(intel.get('data_points', 0)) >= 2, data
+          assert int(intel.get('temporal_items', 0)) >= 1, data
+          print('LIVE EXTRACTION PROOF:', intel)
+          PY
+
+      - name: Verify accumulated structured profile and efficiency metrics
+        env:
+          INSTALLATION: ${{ steps.register.outputs.installation }}
+          TOKEN: ${{ steps.register.outputs.token }}
+        run: |
+          set -euo pipefail
+          snap="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $INSTALLATION" \
+            -H "x-mom-token: $TOKEN" \
+            -d '{"action":"snapshot"}' \
+            "$MOM_INTELLIGENCE_URL")"
+          echo "$snap"
+          SNAP="$snap" python3 - <<'PY'
+          import json, os
+          data=json.loads(os.environ['SNAP'])
+          totals=data['totals']
+          assert totals['profile_facts'] >= 1, data
+          assert totals['extractions'] >= 1, data
+          assert totals['temporal_items'] >= 1, data
+          assert totals['data_points'] >= 2, data
+          assert totals['data_points_per_1000_chars'] > 0, data
+          print('PROFILE FACTS:', totals['profile_facts'])
+          print('TEMPORAL ITEMS:', totals['temporal_items'])
+          print('DATA POINTS / 1000 CHARS:', totals['data_points_per_1000_chars'])
+          print('AVERAGE AGENT LATENCY MS:', totals['average_agent_latency_ms'])
+          PY
+
+      - name: Clean disposable intelligence data and installation
+        if: always()
+        env:
+          INSTALLATION: ${{ steps.register.outputs.installation }}
+          TOKEN: ${{ steps.register.outputs.token }}
+        run: |
+          if [ -z "${INSTALLATION:-}" ] || [ -z "${TOKEN:-}" ]; then exit 0; fi
+          curl -sS -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $INSTALLATION" \
+            -H "x-mom-token: $TOKEN" \
+            -d '{"action":"cleanup_test"}' \
+            "$MOM_INTELLIGENCE_URL" >/dev/null || true
+          curl -sS -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $INSTALLATION" \
+            -H "x-mom-token: $TOKEN" \
+            -d '{"action":"unregister_test"}' \
+            "$MOM_BRAIN_URL" >/dev/null || true
