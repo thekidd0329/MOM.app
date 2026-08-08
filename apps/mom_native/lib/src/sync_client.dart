@@ -115,7 +115,7 @@ class MomSyncClient {
     }
   }
 
-  Future<void> ensureRegistered({String appVersion = '0.2.1'}) async {
+  Future<void> ensureRegistered({String appVersion = '0.4.0'}) async {
     if (await registered()) return;
 
     final inFlight = _registrationFlights[syncUrl];
