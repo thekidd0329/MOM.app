@@ -179,8 +179,7 @@ class _MomAppState extends State<MomApp> {
       final failure = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
-        content:
-            'Something between me and my brain is not answering. Try that again in a second.',
+        content: 'Something between me and my brain is not answering. Try that again in a second.',
         createdAt: DateTime.now(),
         metadata: const {'local_error': true},
       );
