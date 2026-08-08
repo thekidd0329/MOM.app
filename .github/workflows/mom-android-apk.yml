@@ -74,6 +74,33 @@ jobs:
       - name: Build debug APK
         run: flutter build apk --debug
 
+      - name: Verify actual APK identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_APK="build/app/outputs/flutter-apk/app-debug.apk"
+          test -s "$SOURCE_APK"
+
+          APP_VERSION="${{ steps.build_identity.outputs.app_version }}"
+          EXPECTED_VERSION_NAME="${APP_VERSION%%+*}"
+          EXPECTED_VERSION_CODE="${APP_VERSION##*+}"
+          if [ "$EXPECTED_VERSION_NAME" = "$APP_VERSION" ]; then
+            EXPECTED_VERSION_CODE="1"
+          fi
+
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          BADGING="$("$AAPT" dump badging "$SOURCE_APK")"
+          PACKAGE_LINE="$(printf '%s\n' "$BADGING" | grep '^package: ' | head -n 1)"
+
+          printf '%s\n' "$PACKAGE_LINE"
+          printf '%s\n' "$PACKAGE_LINE" | grep -F "name='app.mom.mom_native'"
+          printf '%s\n' "$PACKAGE_LINE" | grep -F "versionName='$EXPECTED_VERSION_NAME'"
+          printf '%s\n' "$PACKAGE_LINE" | grep -F "versionCode='$EXPECTED_VERSION_CODE'"
+
+          printf 'verified_package=%s\nverified_version_name=%s\nverified_version_code=%s\n' \
+            'app.mom.mom_native' "$EXPECTED_VERSION_NAME" "$EXPECTED_VERSION_CODE" >> MOM_BUILD.txt
+
       - name: Verify and name APK
         shell: bash
         run: |
