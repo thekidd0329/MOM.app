@@ -12,7 +12,6 @@ const pool = new Pool(SUPABASE_DB_URL, 1);
 const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
-const embeddingModel = new Supabase.ai.Session("gte-small");
 let cachedHfToken = "";
 
 const MOM_RUNTIME_GUARD = `# MOM server identity guard
@@ -153,98 +152,6 @@ async function resolveModel(requested: string) {
   return first.id.trim();
 }
 
-async function generateEmbedding(text: string) {
-  return await embeddingModel.run(text.slice(0, 12000), {
-    mean_pool: true,
-    normalize: true,
-  });
-}
-
-async function backfillMissingEmbeddings(deviceId: string, limit = 12) {
-  try {
-    const { data, error } = await db
-      .from("mom_chat_messages")
-      .select("id,role,content")
-      .eq("device_id", deviceId)
-      .is("embedding", null)
-      .in("role", ["user", "assistant"])
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-
-    let completed = 0;
-    for (const row of data ?? []) {
-      try {
-        const embedding = await generateEmbedding(`${row.role}: ${safeText(row.content, 12000)}`);
-        const { error: updateError } = await db
-          .from("mom_chat_messages")
-          .update({ embedding: JSON.stringify(embedding) })
-          .eq("id", row.id);
-        if (updateError) throw updateError;
-        completed++;
-      } catch (error) {
-        console.error("mom-brain backfill row", row.id, error instanceof Error ? error.message : String(error));
-      }
-    }
-    return completed;
-  } catch (error) {
-    console.error("mom-brain backfill", error instanceof Error ? error.message : String(error));
-    return 0;
-  }
-}
-
-async function recallRelevantMessages(deviceId: string, userText: string, count = 10) {
-  try {
-    const embedding = await generateEmbedding(userText);
-    const { data, error } = await db.rpc("match_mom_chat_messages", {
-      p_device_id: deviceId,
-      p_query_embedding: embedding,
-      p_match_threshold: 0.50,
-      p_match_count: Math.max(1, Math.min(20, count)),
-    });
-    if (error) throw error;
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    console.error("mom-brain recall", error instanceof Error ? error.message : String(error));
-    return [];
-  }
-}
-
-function relevantMemoryBlock(rows: any[], history: Array<{ role: string; content: string }>, userText: string) {
-  const seen = new Set<string>();
-  seen.add(`user\u0000${userText.trim()}`);
-  for (const turn of history) seen.add(`${turn.role}\u0000${turn.content.trim()}`);
-
-  const kept: any[] = [];
-  for (const row of rows) {
-    const role = safeText(row?.role, 20);
-    const content = safeText(row?.content, 5000);
-    if (!content || (role !== "user" && role !== "assistant")) continue;
-    const key = `${role}\u0000${content}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    kept.push({ ...row, role, content });
-    if (kept.length >= 8) break;
-  }
-
-  if (!kept.length) return { text: "", count: 0 };
-  kept.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-  const lines = kept.map((row) => {
-    const when = safeText(row.created_at, 40, "past");
-    const label = row.role === "user" ? "USER" : "MOM";
-    return `[${when}] ${label}: ${row.content}`;
-  });
-
-  return {
-    count: kept.length,
-    text: [
-      "## Relevant past conversation memory",
-      "These are older moments you remember because they connect to what is happening now. Use them naturally when useful. Past things you said are conversational context, not proof that your person stated a fact.",
-      ...lines,
-    ].join("\n\n"),
-  };
-}
-
 function ageHours(value: unknown) {
   const when = Date.parse(safeText(value, 80));
   if (!Number.isFinite(when)) return Number.POSITIVE_INFINITY;
@@ -298,7 +205,7 @@ async function loadStructuredAwareness(deviceId: string) {
     });
     sections.push([
       "## What you remember about your person",
-      "These are things you have learned or noticed from what your person has told you. Experience them as your own memory. Use them naturally; do not recite this list or describe where it came from. Recent emotions are temporary states, not permanent traits. Inferred items remain uncertain until confirmed.",
+      "These are de-identified structured things you have learned or noticed from what your person has told you. Experience them as your own memory. Use them naturally; do not recite this list or describe where it came from. Recent emotions are temporary states, not permanent traits. Inferred items remain uncertain until confirmed.",
       ...lines,
     ].join("\n"));
   }
@@ -316,7 +223,7 @@ async function loadStructuredAwareness(deviceId: string) {
     });
     sections.push([
       "## What you know is time-sensitive",
-      `Your current UTC time awareness is ${now}. These are open commitments, deadlines, reminders, appointments, follow-ups, or events you are keeping track of. Treat the user's original time wording as the human-facing time when available.`,
+      `Your current UTC time awareness is ${now}. These are de-identified open commitments, deadlines, reminders, appointments, follow-ups, or events you are keeping track of.`,
       ...lines,
     ].join("\n"));
   }
@@ -343,15 +250,15 @@ Deno.serve(async (req: Request) => {
     return json(200, {
       ok: true,
       service: "mom-brain",
-      version: 6,
+      version: 7,
       configured,
-      vector_memory: true,
+      raw_memory_location: "device_only",
+      cloud_raw_vector_memory: false,
       structured_profile_context: true,
       temporal_context: true,
       internal_context_isolation: true,
       emotion_first_identity_guard: true,
       repository_knowledge_in_chat: false,
-      embedding_model: "gte-small",
     });
   }
 
@@ -372,19 +279,9 @@ Deno.serve(async (req: Request) => {
   }
 
   if (action === "memory_search") {
-    if (typeof installation.device_id !== "string" || !installation.device_id.startsWith("mom-ci-")) {
-      return json(403, { error: "memory_search_test_only" });
-    }
-    const userText = safeText(body.user_text, 50000);
-    if (!userText) return json(400, { error: "empty_user_text" });
-    await backfillMissingEmbeddings(installation.device_id, 20);
-    const rows = await recallRelevantMessages(installation.device_id, userText, 8);
-    return json(200, {
-      matches: rows.map((row: any) => ({
-        role: safeText(row.role, 20),
-        content: safeText(row.content, 5000),
-        similarity: Number(row.similarity ?? 0),
-      })),
+    return json(410, {
+      error: "raw_vector_memory_disabled",
+      raw_memory_location: "device_only",
     });
   }
 
@@ -433,21 +330,13 @@ Deno.serve(async (req: Request) => {
         .map((turn: any) => ({ role: safeText(turn?.role, 20), content: safeText(turn?.content, 50000) }))
         .filter((turn: any) => (turn.role === "user" || turn.role === "assistant") && turn.content);
 
-      let memory = { text: "", count: 0 };
       let awareness = { text: "", factCount: 0, temporalCount: 0 } as any;
       if (contextMode === "full") {
-        await backfillMissingEmbeddings(installation.device_id, 12);
-        const [recalledRows, structured] = await Promise.all([
-          recallRelevantMessages(installation.device_id, userText, 12),
-          loadStructuredAwareness(installation.device_id),
-        ]);
-        memory = relevantMemoryBlock(recalledRows, history, userText);
-        awareness = structured;
+        awareness = await loadStructuredAwareness(installation.device_id);
       }
 
       const systemParts = [MOM_RUNTIME_GUARD, systemPrompt];
       if (awareness.text) systemParts.push(awareness.text);
-      if (memory.text) systemParts.push(memory.text);
       const system = systemParts.join("\n\n");
 
       const model = await resolveModel(requestedModel);
@@ -476,7 +365,8 @@ Deno.serve(async (req: Request) => {
       return json(200, {
         text: content.trim(),
         model,
-        memory_hits: memory.count,
+        memory_hits: 0,
+        raw_memory_location: "device_only",
         profile_facts_used: awareness.factCount ?? 0,
         temporal_items_used: awareness.temporalCount ?? 0,
       });
