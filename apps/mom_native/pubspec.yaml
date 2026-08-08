@@ -1,7 +1,7 @@
 name: mom_native
 description: Native MOM client for Linux, Android, and iOS.
 publish_to: "none"
-version: 0.4.0+4
+version: 0.4.0+5
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
