@@ -74,12 +74,26 @@ jobs:
       - name: Build debug APK
         run: flutter build apk --debug
 
+      - name: Verify and name APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_APK="build/app/outputs/flutter-apk/app-debug.apk"
+          OUTPUT_APK="build/app/outputs/flutter-apk/MOM-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}-debug.apk"
+          test -s "$SOURCE_APK"
+          cp "$SOURCE_APK" "$OUTPUT_APK"
+          test -s "$OUTPUT_APK"
+          APK_BYTES="$(stat -c '%s' "$OUTPUT_APK")"
+          APK_SHA256="$(sha256sum "$OUTPUT_APK" | awk '{print $1}')"
+          printf 'apk=%s\nbytes=%s\nsha256=%s\n' "$(basename "$OUTPUT_APK")" "$APK_BYTES" "$APK_SHA256" >> MOM_BUILD.txt
+          grep -E '^sha256=[0-9a-f]{64}$' MOM_BUILD.txt
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: mom-android-debug-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}
           path: |
-            apps/mom_native/build/app/outputs/flutter-apk/app-debug.apk
+            apps/mom_native/build/app/outputs/flutter-apk/MOM-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}-debug.apk
             apps/mom_native/MOM_BUILD.txt
           if-no-files-found: error
           retention-days: 14
