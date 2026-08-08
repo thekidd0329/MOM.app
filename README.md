@@ -31,9 +31,11 @@ Start with `apps/mom_native/README.md`.
 
 ## Core separation
 
-`core_llm/` is reserved for the cognition that makes MOM uniquely MOM. Generic model plumbing, app code, platform behavior, permissions, integrations, and hardware belong elsewhere.
+The MOM-specific core LLM is named `mamallama`.
 
-The underlying model is infrastructure, not MOM's identity or product policy. API compatibility with any provider is plumbing only and must not redefine MOM's personality, mission, or response behavior.
+`core_llm/mamallama/` is reserved for the cognition that makes MOM uniquely MOM. Generic model plumbing, app code, platform behavior, permissions, integrations, and hardware belong elsewhere.
+
+The underlying provider model is infrastructure, not MOM's identity or product policy. API compatibility with any provider is plumbing only and must not redefine mamallama, MOM's personality, mission, or response behavior.
 
 ## Learning contract
 
