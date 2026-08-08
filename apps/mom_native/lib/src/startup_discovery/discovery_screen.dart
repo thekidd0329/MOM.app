@@ -165,14 +165,15 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
               ),
             ),
             const SizedBox(height: 26),
-            Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF120A18),
+            Material(
+              color: const Color(0xFF120A18),
+              shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(
+                side: BorderSide(
                   color: _purple.withValues(alpha: 0.48),
                 ),
               ),
+              clipBehavior: Clip.antiAlias,
               child: SwitchListTile.adaptive(
                 value: _allowProfanity,
                 activeThumbColor: _purple,
