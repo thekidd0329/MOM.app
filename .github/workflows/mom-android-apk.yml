@@ -111,12 +111,16 @@ jobs:
           retention-days: 14
 
       - name: Publish verified APK to private download repo
-        if: ${{ secrets.APK_REPO_TOKEN != '' }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "APK_REPO_TOKEN is not configured; skipping private release publish."
+            exit 0
+          fi
+
           APP_VERSION="${{ steps.build_identity.outputs.app_version }}"
           SHORT_SHA="${{ steps.build_identity.outputs.short_sha }}"
           OUTPUT_APK="build/app/outputs/flutter-apk/MOM-${APP_VERSION}-${SHORT_SHA}-debug.apk"
