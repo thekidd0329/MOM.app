@@ -8,6 +8,7 @@ const SUPABASE_DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
 const HF_ENV_TOKEN = Deno.env.get("HF_TOKEN") ?? Deno.env.get("HUGGINGFACE_API_KEY") ?? "";
 const HF_API_BASE = (Deno.env.get("HF_API_BASE") ?? "https://router.huggingface.co/v1").replace(/\/$/, "");
 const DEFAULT_MODEL = (Deno.env.get("MOM_MODEL") ?? "").trim();
+const AWARENESS_URL = `${SUPABASE_URL}/functions/v1/mom-awareness`;
 const pool = new Pool(SUPABASE_DB_URL, 1);
 const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -234,7 +235,42 @@ async function loadStructuredAwareness(deviceId: string) {
     temporalCount: temporal.length,
     facts,
     temporal,
+    scopeSize: 1,
+    source: "local_device_fallback",
   };
+}
+
+async function loadIdentityAwareness(req: Request, deviceId: string) {
+  try {
+    const response = await fetch(AWARENESS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-mom-installation": req.headers.get("x-mom-installation") ?? "",
+        "x-mom-token": req.headers.get("x-mom-token") ?? "",
+      },
+      body: JSON.stringify({ action: "context" }),
+      signal: AbortSignal.timeout(2500),
+    });
+    const raw = await response.text();
+    let data: any = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch {}
+    if (!response.ok || data?.ok !== true) {
+      throw new Error(`awareness_http_${response.status}`);
+    }
+    return {
+      text: safeText(data.context, 50000),
+      factCount: Math.max(0, Number(data.fact_count ?? 0)),
+      temporalCount: Math.max(0, Number(data.temporal_count ?? 0)),
+      facts: [],
+      temporal: [],
+      scopeSize: Math.max(1, Number(data.scope_size ?? 1)),
+      source: "identity_scoped_service",
+    };
+  } catch (error) {
+    console.error("mom-brain awareness fallback", error instanceof Error ? error.message : String(error));
+    return await loadStructuredAwareness(deviceId);
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -250,12 +286,14 @@ Deno.serve(async (req: Request) => {
     return json(200, {
       ok: true,
       service: "mom-brain",
-      version: 7,
+      version: 8,
       configured,
       raw_memory_location: "device_only",
       cloud_raw_vector_memory: false,
       structured_profile_context: true,
       temporal_context: true,
+      identity_scoped_awareness: true,
+      awareness_fallback: "local_device",
       internal_context_isolation: true,
       emotion_first_identity_guard: true,
       repository_knowledge_in_chat: false,
@@ -289,7 +327,7 @@ Deno.serve(async (req: Request) => {
     if (typeof installation.device_id !== "string" || !installation.device_id.startsWith("mom-ci-")) {
       return json(403, { error: "context_snapshot_test_only" });
     }
-    const awareness = await loadStructuredAwareness(installation.device_id);
+    const awareness = await loadIdentityAwareness(req, installation.device_id);
     return json(200, {
       ok: true,
       fact_count: awareness.factCount,
@@ -297,6 +335,8 @@ Deno.serve(async (req: Request) => {
       context: awareness.text,
       facts: awareness.facts,
       temporal: awareness.temporal,
+      awareness_scope_size: awareness.scopeSize,
+      awareness_source: awareness.source,
     });
   }
 
@@ -330,9 +370,9 @@ Deno.serve(async (req: Request) => {
         .map((turn: any) => ({ role: safeText(turn?.role, 20), content: safeText(turn?.content, 50000) }))
         .filter((turn: any) => (turn.role === "user" || turn.role === "assistant") && turn.content);
 
-      let awareness = { text: "", factCount: 0, temporalCount: 0 } as any;
+      let awareness = { text: "", factCount: 0, temporalCount: 0, scopeSize: 1, source: "disabled" } as any;
       if (contextMode === "full") {
-        awareness = await loadStructuredAwareness(installation.device_id);
+        awareness = await loadIdentityAwareness(req, installation.device_id);
       }
 
       const systemParts = [MOM_RUNTIME_GUARD, systemPrompt];
@@ -369,6 +409,8 @@ Deno.serve(async (req: Request) => {
         raw_memory_location: "device_only",
         profile_facts_used: awareness.factCount ?? 0,
         temporal_items_used: awareness.temporalCount ?? 0,
+        awareness_scope_size: awareness.scopeSize ?? 1,
+        awareness_source: awareness.source ?? "unknown",
       });
     }
 
