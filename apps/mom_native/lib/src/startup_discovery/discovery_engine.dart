@@ -11,9 +11,9 @@ class DiscoveryEngine {
     'orientation_control_level',
   ];
 
-  static const int minimumQuestions = 8;
-  static const int mediumQuestions = 12;
-  static const int maximumQuestions = 20;
+  static const int minimumQuestions = 4;
+  static const int mediumQuestions = 6;
+  static const int maximumQuestions = 8;
 
   DiscoveryNode? nextNode(DiscoveryProgress progress) {
     if (progress.complete || shouldFinish(progress)) return null;
