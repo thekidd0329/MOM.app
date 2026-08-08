@@ -12,6 +12,7 @@ import 'src/local_store.dart';
 import 'src/mic_status.dart';
 import 'src/model_client.dart';
 import 'src/mom_home_screen.dart';
+import 'src/mom_login_screen.dart';
 import 'src/startup_discovery/discovery_models.dart';
 import 'src/startup_discovery/discovery_screen.dart';
 import 'src/startup_discovery/discovery_store.dart';
@@ -266,10 +267,11 @@ class _MomAppState extends State<MomApp> {
 
   Future<void> _openSettings() async {
     final current = _config;
-    if (current == null) return;
+    final sync = _sync;
+    if (current == null || sync == null) return;
     final updated = await Navigator.of(context).push<MomConfig>(
       MaterialPageRoute(
-        builder: (_) => SettingsScreen(initial: current.copy()),
+        builder: (_) => SettingsScreen(initial: current.copy(), sync: sync),
       ),
     );
     if (updated == null) return;
@@ -373,9 +375,14 @@ class _MomAppState extends State<MomApp> {
 }
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key, required this.initial});
+  const SettingsScreen({
+    super.key,
+    required this.initial,
+    required this.sync,
+  });
 
   final MomConfig initial;
+  final MomSyncClient sync;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -478,6 +485,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const Divider(height: 36),
           ],
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.devices_other),
+            title: const Text('Use MOM on another device'),
+            subtitle: const Text(
+              'Optional cross-device identity. MOM stays anonymous unless you choose to link devices.',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => MomLoginScreen(sync: widget.sync),
+              ),
+            ),
+          ),
+          const Divider(height: 24),
           SwitchListTile(
             title: const Text('Cloud conversation sync'),
             subtitle: const Text(
