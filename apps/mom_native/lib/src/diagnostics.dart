@@ -37,7 +37,9 @@ class DiagnosticsRunner {
     results.add(DiagnosticResult(
       'Configuration variables',
       !issues.any((i) => i.fatal),
-      issues.isEmpty ? 'All configured variables are in range and parse correctly.' : issues.map((e) => '${e.key}: ${e.message}').join(' | '),
+      issues.isEmpty
+          ? 'All configured variables are in range and parse correctly.'
+          : issues.map((e) => '${e.key}: ${e.message}').join(' | '),
       warning: issues.isNotEmpty && !issues.any((i) => i.fatal),
     ));
 
@@ -56,11 +58,14 @@ class DiagnosticsRunner {
 
     if (Platform.isLinux && config.repoRoot.trim().isNotEmpty) {
       final repo = Directory(expandHome(config.repoRoot));
+      final exists = await repo.exists();
       results.add(DiagnosticResult(
         'Live repository folders',
-        await repo.exists(),
-        await repo.exists() ? 'MOM can read ${repo.path}.' : 'Repository folder is not available: ${repo.path}',
-        warning: !await repo.exists(),
+        exists,
+        exists
+            ? 'MOM can read ${repo.path}.'
+            : 'Repository folder is not available: ${repo.path}',
+        warning: !exists,
       ));
     }
 
@@ -68,7 +73,9 @@ class DiagnosticsRunner {
     results.add(DiagnosticResult(
       'Supabase sync service',
       syncHealth,
-      syncHealth ? 'mom-sync Edge Function is reachable.' : 'mom-sync Edge Function could not be reached.',
+      syncHealth
+          ? 'mom-sync Edge Function is reachable.'
+          : 'mom-sync Edge Function could not be reached.',
     ));
 
     var registered = false;
@@ -81,8 +88,69 @@ class DiagnosticsRunner {
     results.add(DiagnosticResult(
       'Cloud installation identity',
       registered,
-      registered ? 'This MOM install has a server-validated device identity.' : 'Device registration is not complete.',
+      registered
+          ? 'This MOM install has a server-validated device identity.'
+          : 'Device registration is not complete.',
     ));
+
+    if (registered) {
+      try {
+        final snapshot = await sync.intelligenceSnapshot();
+        final totals = snapshot['totals'];
+        final latest = snapshot['latest_facts'];
+        final temporal = snapshot['open_temporal_items'];
+
+        final totalMap = totals is Map<String, dynamic>
+            ? totals
+            : <String, dynamic>{};
+        final factCount = NumberHelper.asInt(totalMap['profile_facts']);
+        final extractionCount = NumberHelper.asInt(totalMap['extractions']);
+        final temporalCount = NumberHelper.asInt(totalMap['temporal_items']);
+        final uniquePoints = NumberHelper.asInt(totalMap['unique_data_points']);
+        final userChars = NumberHelper.asInt(totalMap['user_input_characters']);
+        final density = NumberHelper.asDouble(
+          totalMap['data_points_per_1000_user_chars'],
+        );
+
+        final latestFacts = latest is List
+            ? latest.whereType<Map>().take(4).map((raw) {
+                final value = raw['value'];
+                final category = raw['category'];
+                final evidence = NumberHelper.asInt(raw['evidence_count']);
+                return '${category ?? 'fact'}: ${value ?? ''}${evidence > 1 ? ' (evidence ×$evidence)' : ''}';
+              }).where((value) => value.trim().isNotEmpty).toList()
+            : const <String>[];
+
+        final openItems = temporal is List
+            ? temporal.whereType<Map>().take(2).map((raw) {
+                final title = raw['title'];
+                final timeText = raw['time_text'];
+                final urgency = NumberHelper.asDouble(raw['urgency']);
+                return '${title ?? 'time item'}${timeText == null ? '' : ' · $timeText'} · urgency ${(urgency * 100).round()}%';
+              }).toList()
+            : const <String>[];
+
+        final detail = <String>[
+          '$extractionCount user messages analyzed → $factCount persistent profile facts + $temporalCount time-aware items.',
+          '$uniquePoints unique structured data points from $userChars user characters.',
+          '${density.toStringAsFixed(2)} structured data points per 1,000 user characters.',
+          if (latestFacts.isNotEmpty) 'Latest: ${latestFacts.join(' | ')}',
+          if (openItems.isNotEmpty) 'Open time layer: ${openItems.join(' | ')}',
+        ].join('\n');
+
+        results.add(DiagnosticResult(
+          'MOM intelligence proof',
+          snapshot['ok'] == true,
+          detail,
+        ));
+      } catch (error) {
+        results.add(DiagnosticResult(
+          'MOM intelligence proof',
+          false,
+          'Structured context snapshot unavailable: $error',
+        ));
+      }
+    }
 
     if (Platform.isLinux && config.useLocalLlama) {
       final local = await llama.probe(config.modelApiBase);
@@ -99,12 +167,18 @@ class DiagnosticsRunner {
     results.add(DiagnosticResult(
       'Model endpoint',
       modelHealth,
-      modelHealth ? 'The OpenAI-compatible model endpoint responds.' : 'The configured model endpoint is unavailable.',
+      modelHealth
+          ? 'The OpenAI-compatible model endpoint responds.'
+          : 'The configured model endpoint is unavailable.',
     ));
     if (modelHealth) {
       try {
         final model = await client.resolveModel();
-        results.add(DiagnosticResult('Model selection', model.isNotEmpty, 'Resolved model: $model'));
+        results.add(DiagnosticResult(
+          'Model selection',
+          model.isNotEmpty,
+          'Resolved model: $model',
+        ));
       } catch (error) {
         results.add(DiagnosticResult('Model selection', false, '$error'));
       }
@@ -112,5 +186,19 @@ class DiagnosticsRunner {
     client.close();
 
     return results;
+  }
+}
+
+class NumberHelper {
+  static int asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    return int.tryParse('$value') ?? 0;
+  }
+
+  static double asDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    return double.tryParse('$value') ?? 0;
   }
 }
