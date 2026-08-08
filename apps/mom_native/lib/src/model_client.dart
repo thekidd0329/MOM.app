@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import 'config.dart';
 import 'local_store.dart';
+import 'mic_status.dart';
 import 'sync_client.dart';
 
 class ModelReply {
@@ -32,12 +33,25 @@ class ModelClient {
     return headers;
   }
 
-  Uri _url(String path) => Uri.parse('${config.modelApiBase.replaceAll(RegExp(r'/$'), '')}$path');
+  Uri _url(String path) =>
+      Uri.parse('${config.modelApiBase.replaceAll(RegExp(r'/$'), '')}$path');
 
-  Future<List<String>> _listDirectModels({Duration timeout = const Duration(seconds: 10)}) async {
-    final response = await _http.get(_url('/models'), headers: _headers).timeout(timeout);
+  String _withRuntimeContext(String systemPrompt) {
+    final base = systemPrompt.trim();
+    final device = MomRuntimeDeviceState.promptContext;
+    return device.isEmpty ? base : '$base\n\n$device';
+  }
+
+  Future<List<String>> _listDirectModels({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final response =
+        await _http.get(_url('/models'), headers: _headers).timeout(timeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException('Model API HTTP ${response.statusCode}', uri: _url('/models'));
+      throw HttpException(
+        'Model API HTTP ${response.statusCode}',
+        uri: _url('/models'),
+      );
     }
     final data = jsonDecode(response.body);
     if (data is! Map<String, dynamic> || data['data'] is! List) return const [];
@@ -48,7 +62,9 @@ class ModelClient {
         .toList(growable: false);
   }
 
-  Future<List<String>> listModels({Duration timeout = const Duration(seconds: 10)}) async {
+  Future<List<String>> listModels({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
     if (_useDirectLocalModel) return _listDirectModels(timeout: timeout);
     return _sync.brainModels();
   }
@@ -79,10 +95,12 @@ class ModelClient {
     String knowledgeContext = '',
   }) async {
     final model = await resolveModel();
-    final system = StringBuffer(systemPrompt.trim());
+    final system = StringBuffer(_withRuntimeContext(systemPrompt));
     if (knowledgeContext.trim().isNotEmpty) {
       system.write('\n\n## Relevant MOM repository knowledge\n');
-      system.write('Use this as reference material. It may be incomplete or stale; do not treat it as user-confirmed memory.\n');
+      system.write(
+        'Use this as reference material. It may be incomplete or stale; do not treat it as user-confirmed memory.\n',
+      );
       system.write(knowledgeContext.trim());
     }
 
@@ -91,10 +109,12 @@ class ModelClient {
         : history;
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': system.toString()},
-      ...recent.where((t) => t.role == 'user' || t.role == 'assistant').map((t) => {
-            'role': t.role,
-            'content': t.content,
-          }),
+      ...recent
+          .where((t) => t.role == 'user' || t.role == 'assistant')
+          .map((t) => {
+                'role': t.role,
+                'content': t.content,
+              }),
       {'role': 'user', 'content': userText},
     ];
 
@@ -146,7 +166,7 @@ class ModelClient {
         ? history.sublist(history.length - config.maxHistory)
         : history;
     final reply = await _sync.brainChat(
-      systemPrompt: systemPrompt,
+      systemPrompt: _withRuntimeContext(systemPrompt),
       history: recent
           .where((turn) => turn.role == 'user' || turn.role == 'assistant')
           .map((turn) => {'role': turn.role, 'content': turn.content})
