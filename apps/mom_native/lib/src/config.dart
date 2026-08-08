@@ -27,6 +27,8 @@ class MomConfig {
 
   static const defaultSyncUrl =
       'https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync';
+  static const defaultBrainUrl =
+      'https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain';
 
   String syncUrl;
   String modelApiBase;
@@ -53,15 +55,11 @@ class MomConfig {
       issues.add(const ConfigIssue('syncUrl', 'Supabase sync must use HTTPS.', fatal: true));
     }
 
-    final api = Uri.tryParse(modelApiBase);
-    if (api == null || !api.hasScheme || !api.hasAuthority) {
-      issues.add(const ConfigIssue('modelApiBase', 'Model API URL is invalid.', fatal: true));
-    } else if (isMobile && api.scheme != 'https') {
-      issues.add(const ConfigIssue(
-        'modelApiBase',
-        'Android/iOS require an HTTPS hosted model endpoint.',
-        fatal: true,
-      ));
+    if (useLocalLlama) {
+      final api = Uri.tryParse(modelApiBase);
+      if (api == null || !api.hasScheme || !api.hasAuthority) {
+        issues.add(const ConfigIssue('modelApiBase', 'Local model API URL is invalid.', fatal: true));
+      }
     }
 
     if (temperature < 0 || temperature > 2) {
@@ -133,15 +131,17 @@ class ConfigStore {
     final mainRepo = home.isEmpty ? '' : '$home/MomBrain/MOM.app-main';
     final fallbackRepo = home.isEmpty ? '' : '$home/MomBrain';
     final repo = Directory(mainRepo).existsSync() ? mainRepo : fallbackRepo;
-    final local = Platform.isLinux;
+
+    // Hosted provider credentials belong on the Supabase server now. Remove any
+    // legacy on-device copy left by older MOM builds.
+    await _secure.delete(key: _apiKeyKey);
 
     return MomConfig(
       syncUrl: prefs.getString('sync_url') ?? MomConfig.defaultSyncUrl,
-      modelApiBase: prefs.getString('model_api_base') ??
-          (local ? 'http://127.0.0.1:8080/v1' : 'https://router.huggingface.co/v1'),
+      modelApiBase: prefs.getString('model_api_base') ?? MomConfig.defaultBrainUrl,
       modelName: prefs.getString('model_name') ?? '',
-      modelApiKey: await _secure.read(key: _apiKeyKey) ?? '',
-      useLocalLlama: prefs.getBool('use_local_llama') ?? local,
+      modelApiKey: '',
+      useLocalLlama: prefs.getBool('use_local_llama') ?? false,
       modelsDir: prefs.getString('models_dir') ?? defaultModels,
       repoRoot: prefs.getString('repo_root') ?? repo,
       cloudChatSync: prefs.getBool('cloud_chat_sync') ?? true,
@@ -163,10 +163,9 @@ class ConfigStore {
     await prefs.setBool('product_telemetry', config.productTelemetry);
     await prefs.setDouble('temperature', config.temperature);
     await prefs.setInt('max_history', config.maxHistory);
-    if (config.modelApiKey.trim().isEmpty) {
-      await _secure.delete(key: _apiKeyKey);
-    } else {
-      await _secure.write(key: _apiKeyKey, value: config.modelApiKey.trim());
-    }
+
+    // Never persist hosted model credentials in the client.
+    config.modelApiKey = '';
+    await _secure.delete(key: _apiKeyKey);
   }
 }

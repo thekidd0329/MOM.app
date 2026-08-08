@@ -4,8 +4,8 @@ MOM's installable client for Linux Mint, Android, and iOS.
 
 ## Product behavior
 
-- Linux: native Flutter desktop app. It can start the installed `llama` launcher itself in router mode using `~/MomBrain/models`, so normal use does not require a terminal.
-- Android: native APK. Hosted OpenAI-compatible inference is configured inside Settings and the API key is stored with platform secure storage.
+- Linux: native Flutter desktop app. Server-hosted inference is the default; local llama.cpp remains available as an explicit development/advanced option.
+- Android: native APK. Hosted inference always goes through the Supabase `mom-brain` Edge Function. No Hugging Face or other hosted-model credential is stored in the APK or platform secure storage.
 - iOS: native Flutter/iOS target. CI compiles an unsigned build; installing on a physical iPhone requires Apple signing/TestFlight.
 - All platforms: local transcript persistence, MOM identity prompt, repository knowledge retrieval, Supabase chat sync, per-install server-validated device token, privacy-scoped runtime telemetry, settings, and diagnostics.
 
@@ -17,7 +17,12 @@ Linux additionally reads the configured live repository folder at runtime. Andro
 
 ## Supabase
 
-The native clients call the `mom-sync` Edge Function. They never contain a service-role key. First launch registers a random device ID and receives a device token stored in secure storage. The function validates that token before chat, event, history, or candidate-memory writes.
+The native clients use two server boundaries:
+
+- `mom-sync` registers installations and brokers chat history, runtime events, history retrieval, and candidate-memory writes.
+- `mom-brain` brokers hosted LLM inference and owns the hosted-provider credential server-side. Production can source that credential from Supabase server-side storage without exposing it to the client.
+
+First launch registers a random device ID and receives a device token stored in platform secure storage. Both server functions validate that installation token before protected operations. Hosted provider credentials never need to be present on the device. Older MOM builds that stored a hosted-model key have that legacy key deleted on configuration load.
 
 Cloud tables used by this slice:
 - `mom_installations`
@@ -28,7 +33,7 @@ Cloud tables used by this slice:
 
 ## Data collection
 
-Cloud conversation sync and product/runtime telemetry are separate switches. Runtime telemetry includes event type, platform/runtime context, response latency, model name, response size, error type, and knowledge-document counts. Model API keys are not sent to telemetry.
+Cloud conversation sync and product/runtime telemetry are separate switches. Runtime telemetry includes event type, platform/runtime context, response latency, model name, response size, error type, and knowledge-document counts. Hosted provider credentials remain server-side and are not telemetry fields.
 
 ## Tests
 
@@ -37,4 +42,6 @@ Cloud conversation sync and product/runtime telemetry are separate switches. Run
 - Android release APK
 - unsigned iOS release app archive
 
-The in-app Diagnostics screen separately validates configuration ranges, local storage, knowledge access, repository access, Supabase connectivity/device registration, local llama.cpp status, model endpoint connectivity, and model resolution.
+`.github/workflows/mom-brain-proxy.yml` additionally performs an end-to-end server smoke test against the deployed `mom-brain` function using a temporary CI installation identity. It verifies Supabase can see its hosted-model secret, that Hugging Face model discovery succeeds, and that a real chat completion can return through the server proxy.
+
+The in-app Diagnostics screen separately validates configuration ranges, local storage, knowledge access, repository access, Supabase connectivity/device registration, optional local llama.cpp status, and model connectivity.
