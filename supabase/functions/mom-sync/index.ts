@@ -103,7 +103,13 @@ async function embedStoredMessage(id: number, role: string, content: string) {
   }
 }
 
-async function extractIntelligence(req: Request, sessionId: string, content: string) {
+async function extractIntelligence(
+  req: Request,
+  sessionId: string,
+  content: string,
+  localNow: string,
+  utcOffsetMinutes: number,
+) {
   try {
     const installation = req.headers.get("x-mom-installation") ?? "";
     const token = req.headers.get("x-mom-token") ?? "";
@@ -118,7 +124,8 @@ async function extractIntelligence(req: Request, sessionId: string, content: str
         action: "process",
         session_id: sessionId,
         user_text: content,
-        local_now: new Date().toISOString(),
+        local_now: localNow || new Date().toISOString(),
+        utc_offset_minutes: utcOffsetMinutes,
       }),
     });
     const raw = await call.text();
@@ -133,7 +140,7 @@ async function extractIntelligence(req: Request, sessionId: string, content: str
       facts_produced: Number(data?.facts_produced ?? 0),
       temporal_items: Array.isArray(data?.temporal_items) ? data.temporal_items.length : 0,
       data_points: Number(data?.data_points ?? 0),
-      data_points_per_1000_chars: Number(data?.data_points_per_1000_chars ?? 0),
+      data_points_per_1000_user_chars: Number(data?.data_points_per_1000_user_chars ?? 0),
     };
   } catch (error) {
     console.error("mom-sync intelligence", error instanceof Error ? error.message : String(error));
@@ -153,10 +160,11 @@ Deno.serve(async (req: Request) => {
     return response(200, {
       ok: true,
       service: "mom-sync",
-      version: 3,
+      version: 4,
       vector_memory: true,
       structured_context: true,
       temporal_agent: true,
+      client_time_context: true,
     });
   }
 
@@ -201,8 +209,18 @@ Deno.serve(async (req: Request) => {
       const embedded = (role === "user" || role === "assistant")
         ? await embedStoredMessage(inserted.id, role, content)
         : false;
+      const offsetRaw = Number(body.utc_offset_minutes ?? 0);
+      const utcOffsetMinutes = Number.isFinite(offsetRaw)
+        ? Math.max(-840, Math.min(840, Math.trunc(offsetRaw)))
+        : 0;
       const intelligence = role === "user"
-        ? await extractIntelligence(req, sessionId, content)
+        ? await extractIntelligence(
+            req,
+            sessionId,
+            content,
+            safeText(body.local_now, 80),
+            utcOffsetMinutes,
+          )
         : null;
 
       if (intelligence) {
