@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -50,7 +48,6 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   final TextEditingController _name = TextEditingController();
   int _stage = 0;
   bool _allowStrongLanguage = true;
-  Timer? _videoFallbackTimer;
 
   void _chooseLanguage(bool value) {
     setState(() {
@@ -60,16 +57,14 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   }
 
   void _enterVideoStage() {
+    // Keep the intro slot on screen until the user explicitly advances it.
+    // The trailer asset is not bundled yet, so silently auto-skipping this
+    // stage would make the first-run experience look broken.
     setState(() => _stage = 2);
-    // The trailer asset is not bundled yet. Preserve its exact place in the
-    // first-run sequence, then hand off automatically until the asset lands.
-    _videoFallbackTimer?.cancel();
-    _videoFallbackTimer = Timer(const Duration(milliseconds: 1400), _finishVideo);
   }
 
   void _finishVideo() {
     if (!mounted || _stage != 2) return;
-    _videoFallbackTimer?.cancel();
     setState(() => _stage = 3);
   }
 
@@ -84,7 +79,6 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
 
   @override
   void dispose() {
-    _videoFallbackTimer?.cancel();
     _name.dispose();
     super.dispose();
   }
