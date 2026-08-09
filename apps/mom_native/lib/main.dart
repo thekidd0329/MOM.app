@@ -19,6 +19,7 @@ import 'src/startup_discovery/discovery_store.dart';
 import 'src/startup_intro_screen.dart';
 import 'src/sync_client.dart';
 import 'src/voice_service.dart';
+import 'src/voice_state.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +42,7 @@ class _MomAppState extends State<MomApp> {
   final MomMicrophoneProbe _micProbe = MomMicrophoneProbe();
   final StartupIntroStore _startupIntroStore = StartupIntroStore();
   final MomVoiceService _voice = MomVoiceService();
+  final MomVoiceStateMachine _voiceState = MomVoiceStateMachine();
 
   MomConfig? _config;
   MomSyncClient? _sync;
@@ -53,14 +55,32 @@ class _MomAppState extends State<MomApp> {
   MomMicrophoneStatus _microphone = const MomMicrophoneStatus.unknown();
   bool _booting = true;
   bool _startupIntroComplete = false;
-  bool _busy = false;
-  bool _listening = false;
   String _status = 'starting';
+
+  bool get _busy => _voiceState.blocksTextInput;
+  bool get _listening => _voiceState.listening;
 
   @override
   void initState() {
     super.initState();
     _bootstrap();
+  }
+
+  void _setVoiceState(MomVoiceState next) {
+    if (_voiceState.state == next) return;
+    if (mounted) {
+      setState(() => _voiceState.transition(next));
+    } else {
+      _voiceState.transition(next);
+    }
+  }
+
+  void _recoverVoiceState() {
+    if (mounted) {
+      setState(_voiceState.recover);
+    } else {
+      _voiceState.recover();
+    }
   }
 
   Future<void> _bootstrap() async {
@@ -212,28 +232,66 @@ class _MomAppState extends State<MomApp> {
   }
 
   Future<void> _toggleListening() async {
-    if (_listening) {
+    if (_voiceState.state == MomVoiceState.listening) {
       await _voice.stopListening();
-      if (mounted) setState(() => _listening = false);
+      if (_voiceState.state == MomVoiceState.listening) {
+        _setVoiceState(MomVoiceState.idle);
+      }
       return;
     }
 
+    if (_voiceState.state == MomVoiceState.error) {
+      _recoverVoiceState();
+    }
+    if (_voiceState.state != MomVoiceState.idle) return;
+
     await _probeMicrophone(true);
     if (!_microphone.permissionGranted) return;
-    await _voice.listen(
-      onState: (value) {
-        if (mounted) setState(() => _listening = value);
-      },
-      onFinal: (text) {
-        if (mounted) setState(() => _listening = false);
-        unawaited(_send(text, inputMode: 'voice'));
-      },
-    );
+
+    _setVoiceState(MomVoiceState.listening);
+    try {
+      await _voice.listen(
+        onState: (value) {
+          if (value && _voiceState.state == MomVoiceState.idle) {
+            _setVoiceState(MomVoiceState.listening);
+          } else if (!value &&
+              _voiceState.state == MomVoiceState.listening) {
+            _setVoiceState(MomVoiceState.idle);
+          }
+        },
+        onFinal: (text) {
+          if (_voiceState.state == MomVoiceState.listening) {
+            _setVoiceState(MomVoiceState.idle);
+          }
+          unawaited(_send(text, inputMode: 'voice'));
+        },
+      );
+    } catch (error) {
+      if (_voiceState.state != MomVoiceState.error) {
+        _setVoiceState(MomVoiceState.error);
+      }
+      unawaited(_safeEvent(
+        'voice_listen_error',
+        payload: {'error_type': error.runtimeType.toString()},
+      ));
+    }
   }
 
   Future<void> _send(String text, {String inputMode = 'text'}) async {
     final config = _config;
     if (config == null || _busy || text.trim().isEmpty) return;
+
+    if (_voiceState.state == MomVoiceState.listening) {
+      await _voice.stopListening();
+      if (_voiceState.state == MomVoiceState.listening) {
+        _setVoiceState(MomVoiceState.idle);
+      }
+    }
+    if (_voiceState.state == MomVoiceState.error) {
+      _recoverVoiceState();
+    }
+    if (_voiceState.state != MomVoiceState.idle) return;
+
     final issues = config.validate().where((e) => e.fatal).toList();
     if (issues.isNotEmpty) {
       setState(() => _status = 'settings need attention');
@@ -253,7 +311,7 @@ class _MomAppState extends State<MomApp> {
       },
     );
     setState(() {
-      _busy = true;
+      _voiceState.transition(MomVoiceState.thinking);
       _status = 'thinking';
       _turns = [..._turns, userTurn];
     });
@@ -294,12 +352,36 @@ class _MomAppState extends State<MomApp> {
           _turns = [..._turns, assistantTurn];
           _captionTurns = [..._captionTurns, assistantTurn];
           _status = 'online';
+          _voiceState.transition(MomVoiceState.synthesizing);
         });
+      } else {
+        _voiceState.transition(MomVoiceState.synthesizing);
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
+
       try {
-        await _voice.speak(reply.text);
-      } catch (_) {}
+        await _voice.speak(
+          reply.text,
+          onPlaybackStart: () {
+            if (_voiceState.state == MomVoiceState.synthesizing) {
+              _setVoiceState(MomVoiceState.speaking);
+            }
+          },
+        );
+        if (_voiceState.state == MomVoiceState.speaking ||
+            _voiceState.state == MomVoiceState.synthesizing) {
+          _setVoiceState(MomVoiceState.idle);
+        }
+      } catch (error) {
+        if (_voiceState.state != MomVoiceState.error) {
+          _setVoiceState(MomVoiceState.error);
+        }
+        unawaited(_safeEvent(
+          'voice_output_error',
+          payload: {'error_type': error.runtimeType.toString()},
+        ));
+      }
+
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
         'model': reply.model,
@@ -308,6 +390,9 @@ class _MomAppState extends State<MomApp> {
         'output_mode': 'orb_caption',
       }));
     } catch (error) {
+      if (_voiceState.state != MomVoiceState.error) {
+        _setVoiceState(MomVoiceState.error);
+      }
       final failure = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
@@ -333,7 +418,6 @@ class _MomAppState extends State<MomApp> {
       ));
     } finally {
       client.close();
-      if (mounted) setState(() => _busy = false);
     }
   }
 
