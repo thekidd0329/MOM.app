@@ -42,6 +42,42 @@ class ModelClient {
     return device.isEmpty ? base : '$base\n\n$device';
   }
 
+  String _directSystem(String systemPrompt, String knowledgeContext) {
+    final system = StringBuffer(_withRuntimeContext(systemPrompt));
+    if (knowledgeContext.trim().isNotEmpty) {
+      system.write('\n\n## Relevant MOM repository knowledge\n');
+      system.write(
+        'Use this as reference material. It may be incomplete or stale; do not treat it as user-confirmed memory.\n',
+      );
+      system.write(knowledgeContext.trim());
+    }
+    return system.toString();
+  }
+
+  List<Map<String, String>> _directMessages({
+    required String systemPrompt,
+    required List<ChatTurn> history,
+    required String userText,
+    String knowledgeContext = '',
+  }) {
+    final recent = history.length > config.maxHistory
+        ? history.sublist(history.length - config.maxHistory)
+        : history;
+    return <Map<String, String>>[
+      {
+        'role': 'system',
+        'content': _directSystem(systemPrompt, knowledgeContext),
+      },
+      ...recent
+          .where((turn) => turn.role == 'user' || turn.role == 'assistant')
+          .map((turn) => {
+                'role': turn.role,
+                'content': turn.content,
+              }),
+      {'role': 'user', 'content': userText},
+    ];
+  }
+
   Future<List<String>> _listDirectModels({
     Duration timeout = const Duration(seconds: 10),
   }) async {
@@ -95,36 +131,18 @@ class ModelClient {
     String knowledgeContext = '',
   }) async {
     final model = await resolveModel();
-    final system = StringBuffer(_withRuntimeContext(systemPrompt));
-    if (knowledgeContext.trim().isNotEmpty) {
-      system.write('\n\n## Relevant MOM repository knowledge\n');
-      system.write(
-        'Use this as reference material. It may be incomplete or stale; do not treat it as user-confirmed memory.\n',
-      );
-      system.write(knowledgeContext.trim());
-    }
-
-    final recent = history.length > config.maxHistory
-        ? history.sublist(history.length - config.maxHistory)
-        : history;
-    final messages = <Map<String, String>>[
-      {'role': 'system', 'content': system.toString()},
-      ...recent
-          .where((t) => t.role == 'user' || t.role == 'assistant')
-          .map((t) => {
-                'role': t.role,
-                'content': t.content,
-              }),
-      {'role': 'user', 'content': userText},
-    ];
-
     final response = await _http
         .post(
           _url('/chat/completions'),
           headers: _headers,
           body: jsonEncode({
             'model': model,
-            'messages': messages,
+            'messages': _directMessages(
+              systemPrompt: systemPrompt,
+              history: history,
+              userText: userText,
+              knowledgeContext: knowledgeContext,
+            ),
             'temperature': config.temperature,
             'stream': false,
           }),
@@ -145,6 +163,64 @@ class ModelClient {
       }
     } catch (_) {}
     throw const FormatException('Model returned an unexpected response.');
+  }
+
+  Future<ModelReply> _directChatStream({
+    required String systemPrompt,
+    required List<ChatTurn> history,
+    required String userText,
+    required void Function(String delta) onDelta,
+    String knowledgeContext = '',
+  }) async {
+    final model = await resolveModel();
+    final target = _url('/chat/completions');
+    final request = http.Request('POST', target)
+      ..headers.addAll(_headers)
+      ..body = jsonEncode({
+        'model': model,
+        'messages': _directMessages(
+          systemPrompt: systemPrompt,
+          history: history,
+          userText: userText,
+          knowledgeContext: knowledgeContext,
+        ),
+        'temperature': config.temperature,
+        'stream': true,
+      });
+    final response = await _http.send(request).timeout(const Duration(seconds: 30));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final detail = await response.stream.bytesToString();
+      throw HttpException(
+        'Model API HTTP ${response.statusCode}: $detail',
+        uri: target,
+      );
+    }
+
+    final text = StringBuffer();
+    final lines = response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .timeout(const Duration(minutes: 5));
+    await for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (!line.startsWith('data:')) continue;
+      final payload = line.substring(5).trim();
+      if (payload.isEmpty) continue;
+      if (payload == '[DONE]') break;
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) continue;
+      try {
+        final delta = decoded['choices'][0]['delta']['content'];
+        if (delta is String && delta.isNotEmpty) {
+          text.write(delta);
+          onDelta(delta);
+        }
+      } catch (_) {}
+    }
+    if (text.toString().trim().isEmpty) {
+      throw const FormatException('Model stream returned no text.');
+    }
+    return ModelReply(text: text.toString().trim(), model: model);
   }
 
   Future<ModelReply> chat({
@@ -176,6 +252,41 @@ class ModelClient {
       model: config.modelName.trim(),
       temperature: config.temperature,
       maxHistory: config.maxHistory,
+    );
+    return ModelReply(text: reply.text, model: reply.model);
+  }
+
+  Future<ModelReply> chatStream({
+    required String systemPrompt,
+    required List<ChatTurn> history,
+    required String userText,
+    required void Function(String delta) onDelta,
+    String knowledgeContext = '',
+  }) async {
+    if (_useDirectLocalModel) {
+      return _directChatStream(
+        systemPrompt: systemPrompt,
+        history: history,
+        userText: userText,
+        knowledgeContext: knowledgeContext,
+        onDelta: onDelta,
+      );
+    }
+
+    final recent = history.length > config.maxHistory
+        ? history.sublist(history.length - config.maxHistory)
+        : history;
+    final reply = await _sync.brainChatStream(
+      systemPrompt: _withRuntimeContext(systemPrompt),
+      history: recent
+          .where((turn) => turn.role == 'user' || turn.role == 'assistant')
+          .map((turn) => {'role': turn.role, 'content': turn.content})
+          .toList(growable: false),
+      userText: userText,
+      model: config.modelName.trim(),
+      temperature: config.temperature,
+      maxHistory: config.maxHistory,
+      onDelta: onDelta,
     );
     return ModelReply(text: reply.text, model: reply.model);
   }
