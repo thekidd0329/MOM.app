@@ -5,9 +5,10 @@ Usage:
     python3 tools/verify_android_apk.py <apk> <staged-jni-dir> [manifest]
 
 The staged JNI directory is expected to contain the lib*.so files copied into
-android/app/src/main/jniLibs/arm64-v8a before the Flutter release build. When a
-manifest path is supplied, MOM's required network/microphone declarations are
-also verified before the APK is accepted.
+android/app/src/main/jniLibs/arm64-v8a before the Flutter release build. MOM's
+required network/microphone declarations are verified before the APK is
+accepted. If no manifest path is supplied, it is derived from the staged JNI
+location.
 """
 
 from __future__ import annotations
@@ -87,23 +88,23 @@ def main(argv: list[str]) -> int:
 
     apk = Path(argv[1]).expanduser().resolve()
     staged_dir = Path(argv[2]).expanduser().resolve()
-    manifest = Path(argv[3]).expanduser().resolve() if len(argv) == 4 else None
+    manifest = (
+        Path(argv[3]).expanduser().resolve()
+        if len(argv) == 4
+        else staged_dir.parent.parent / "AndroidManifest.xml"
+    )
 
     try:
         expected = verify(apk, staged_dir)
-        declarations = verify_manifest(manifest) if manifest is not None else ()
+        declarations = verify_manifest(manifest)
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"MOM APK verification failed: {exc}", file=sys.stderr)
         return 1
 
-    detail = (
-        f" and all {len(declarations)} required manifest declarations"
-        if declarations
-        else ""
-    )
     print(
         f"MOM APK verified: {apk} contains all {len(expected)} staged "
-        f"arm64 native libraries{detail}"
+        f"arm64 native libraries and all {len(declarations)} required "
+        "manifest declarations"
     )
     return 0
 
