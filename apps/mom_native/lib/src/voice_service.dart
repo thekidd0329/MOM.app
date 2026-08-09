@@ -21,11 +21,47 @@ class MomVoiceService {
   final AudioPlayer _player = AudioPlayer();
 
   bool _speechReady = false;
+  Future<_VoiceAssets>? _assetsFuture;
   bool get listening => _speech.isListening;
 
   Future<bool> initialize() async {
     _speechReady = await _speech.initialize();
+    unawaited(_warmVoiceAssets());
     return _speechReady;
+  }
+
+  Future<void> _warmVoiceAssets() async {
+    try {
+      await _prepareVoiceAssets();
+    } catch (_) {
+      // Voice download failures must never block startup. speak() retries later.
+    }
+  }
+
+  Future<_VoiceAssets> _prepareVoiceAssets() async {
+    final existing = _assetsFuture;
+    if (existing != null) return existing;
+
+    final future = _loadVoiceAssets();
+    _assetsFuture = future;
+    try {
+      return await future;
+    } catch (_) {
+      if (identical(_assetsFuture, future)) _assetsFuture = null;
+      rethrow;
+    }
+  }
+
+  Future<_VoiceAssets> _loadVoiceAssets() async {
+    final dir = await getApplicationSupportDirectory();
+    final voiceDir = Directory('${dir.path}/voice');
+    await voiceDir.create(recursive: true);
+
+    final model = File('${voiceDir.path}/$_modelName');
+    final voice = File('${voiceDir.path}/$_voiceName');
+    await _downloadIfMissing(model, _modelUrl);
+    await _downloadIfMissing(voice, _voiceUrl);
+    return _VoiceAssets(model: model, voice: voice, directory: voiceDir);
   }
 
   Future<void> listen({
@@ -57,22 +93,15 @@ class MomVoiceService {
 
   Future<void> speak(String text) async {
     if (text.trim().isEmpty) return;
-    final dir = await getApplicationSupportDirectory();
-    final voiceDir = Directory('${dir.path}/voice');
-    await voiceDir.create(recursive: true);
-
-    final model = File('${voiceDir.path}/$_modelName');
-    final voice = File('${voiceDir.path}/$_voiceName');
-    await _downloadIfMissing(model, _modelUrl);
-    await _downloadIfMissing(voice, _voiceUrl);
+    final assets = await _prepareVoiceAssets();
 
     final request = _SynthesisRequest(
-      modelPath: model.path,
-      voicePath: voice.path,
+      modelPath: assets.model.path,
+      voicePath: assets.voice.path,
       text: text.trim(),
     );
     final wav = await Isolate.run(() => _synthesize(request));
-    final output = File('${voiceDir.path}/mom-response.wav');
+    final output = File('${assets.directory.path}/mom-response.wav');
     await output.writeAsBytes(wav, flush: true);
     await _player.stop();
     await _player.play(DeviceFileSource(output.path));
@@ -103,6 +132,18 @@ class MomVoiceService {
     await _speech.stop();
     await _player.dispose();
   }
+}
+
+class _VoiceAssets {
+  const _VoiceAssets({
+    required this.model,
+    required this.voice,
+    required this.directory,
+  });
+
+  final File model;
+  final File voice;
+  final Directory directory;
 }
 
 class _SynthesisRequest {
