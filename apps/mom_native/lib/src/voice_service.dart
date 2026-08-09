@@ -22,6 +22,8 @@ class MomVoiceService {
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
+  int _speechGeneration = 0;
+  File? _playingFile;
   bool get listening => _speech.isListening;
 
   Future<bool> initialize() async {
@@ -92,19 +94,41 @@ class MomVoiceService {
   }
 
   Future<void> speak(String text) async {
-    if (text.trim().isEmpty) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+
+    final generation = ++_speechGeneration;
     final assets = await _prepareVoiceAssets();
+    if (generation != _speechGeneration) return;
 
     final request = _SynthesisRequest(
       modelPath: assets.model.path,
       voicePath: assets.voice.path,
-      text: text.trim(),
+      text: trimmed,
     );
     final wav = await Isolate.run(() => _synthesize(request));
-    final output = File('${assets.directory.path}/mom-response.wav');
+    if (generation != _speechGeneration) return;
+
+    final output =
+        File('${assets.directory.path}/mom-response-$generation.wav');
     await output.writeAsBytes(wav, flush: true);
+    if (generation != _speechGeneration) {
+      if (await output.exists()) await output.delete();
+      return;
+    }
+
     await _player.stop();
+    final previous = _playingFile;
+    if (previous != null && await previous.exists()) {
+      await previous.delete();
+    }
+    if (generation != _speechGeneration) {
+      if (await output.exists()) await output.delete();
+      return;
+    }
+
     await _player.play(DeviceFileSource(output.path));
+    _playingFile = output;
   }
 
   Future<void> _downloadIfMissing(File file, String url) async {
@@ -149,8 +173,14 @@ class MomVoiceService {
   }
 
   Future<void> dispose() async {
+    _speechGeneration++;
     await _speech.stop();
+    await _player.stop();
     await _player.dispose();
+    final playing = _playingFile;
+    if (playing != null && await playing.exists()) {
+      await playing.delete();
+    }
   }
 }
 
