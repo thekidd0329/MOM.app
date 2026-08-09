@@ -75,11 +75,12 @@ class _MomAppState extends State<MomApp> {
       if (_startupIntroComplete) {
         final savedName = await _startupIntroStore.savedName();
         final strongLanguage = await _startupIntroStore.allowsStrongLanguage();
+        final momStyle = await _startupIntroStore.savedMomStyle();
         if (savedName.isNotEmpty) {
           _systemPrompt = '$_systemPrompt\n\nThe person wants to be called $savedName.';
         }
         _systemPrompt =
-            '$_systemPrompt\nLanguage preference: ${strongLanguage ? 'strong language is allowed' : 'keep language clean'}.';
+            '$_systemPrompt\nLanguage preference: ${strongLanguage ? 'strong language is allowed' : 'keep language clean'}.\nPreferred mothering style: ${_momStylePrompt(momStyle)}.';
       }
 
       _discovery = await _discoveryStore.load();
@@ -122,6 +123,15 @@ class _MomAppState extends State<MomApp> {
     }
   }
 
+  String _momStylePrompt(String value) {
+    return switch (value) {
+      'gentle' => 'gentle, patient, and reassuring',
+      'tough_love' => 'blunt, direct, and willing to use tough love',
+      'adaptive' => 'observe the person and adapt naturally over time',
+      _ => 'balance comfort with honest, direct guidance',
+    };
+  }
+
   Future<void> _completeStartupIntro({
     required bool allowStrongLanguage,
     required String name,
@@ -131,10 +141,12 @@ class _MomAppState extends State<MomApp> {
       name: name,
     );
     if (!mounted) return;
+    final momStyle = await _startupIntroStore.savedMomStyle();
+    if (!mounted) return;
     setState(() {
       _startupIntroComplete = true;
       _systemPrompt =
-          '$_systemPrompt\n\nThe person wants to be called $name.\nLanguage preference: ${allowStrongLanguage ? 'strong language is allowed' : 'keep language clean'}.';
+          '$_systemPrompt\n\nThe person wants to be called $name.\nLanguage preference: ${allowStrongLanguage ? 'strong language is allowed' : 'keep language clean'}.\nPreferred mothering style: ${_momStylePrompt(momStyle)}.';
     });
   }
 
@@ -400,9 +412,15 @@ class _MomAppState extends State<MomApp> {
         ),
       );
     } else if (!_startupIntroComplete) {
-      home = StartupIntroScreen(onComplete: _completeStartupIntro);
+      home = StartupIntroScreen(
+        onComplete: _completeStartupIntro,
+        onSpeak: (text) => _voice.speak(text).catchError((_) {}),
+      );
     } else if (!_discovery.complete) {
-      home = StartupDiscoveryScreen(onComplete: _completeDiscovery);
+      home = StartupDiscoveryScreen(
+        onComplete: _completeDiscovery,
+        onSpeak: (text) => _voice.speak(text).catchError((_) {}),
+      );
     } else {
       home = MomHomeScreen(
         turns: _captionTurns,
