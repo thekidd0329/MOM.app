@@ -1,0 +1,46 @@
+name: Workload 1 Phase 3 Chunked TTS
+
+on:
+  push:
+    branches:
+      - workload1/phase3-chunked-tts
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/workload1-phase3-chunked-tts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Chunked speech playback contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Chunking and playback tests
+        working-directory: apps/mom_native
+        run: flutter test test/speech_chunker_test.dart test/voice_conversation_controller_test.dart test/voice_playback_phase3_test.dart
+      - name: Full Flutter test suite
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Live MOM brain health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"action":"health"}' https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain)"
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+          echo "$body" | grep -q '"configured":true'
+          echo "$body" | grep -q '"service":"mom-brain"'
