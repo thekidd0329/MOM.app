@@ -152,6 +152,14 @@ jobs:
               permissions.append('    <uses-permission android:name="android.permission.RECORD_AUDIO" />')
           if permissions:
               s = s.replace(marker, marker + '\n' + '\n'.join(permissions))
+          if '<queries>' not in s:
+              queries = '''    <queries>
+                  <intent>
+                      <action android:name="android.speech.RecognitionService" />
+                  </intent>
+              </queries>
+          '''
+              s = s.replace('</manifest>', queries + '</manifest>')
           p.write_text(s)
           PY
       - name: Build Android release APK
