@@ -1,0 +1,52 @@
+name: Workload 1 Phase 4 Stream Transport
+
+on:
+  push:
+    branches:
+      - workload1/phase4-stream-transport
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/**"
+      - "supabase/functions/mom-brain-stream/**"
+      - ".github/workflows/workload1-phase4-stream-transport.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Streaming brain transport contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Stream parser and transport tests
+        working-directory: apps/mom_native
+        run: flutter test test/brain_stream_parser_test.dart test/brain_stream_phase4_test.dart
+      - name: Full Flutter test suite
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Type-check streaming edge function
+        run: deno check supabase/functions/mom-brain-stream/index.ts
+      - name: Live MOM brain health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"action":"health"}' https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain)"
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+          echo "$body" | grep -q '"configured":true'
+          echo "$body" | grep -q '"service":"mom-brain"'
