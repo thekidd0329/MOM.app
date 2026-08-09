@@ -11,22 +11,26 @@ class MomHomeScreen extends StatefulWidget {
     super.key,
     required this.turns,
     required this.busy,
+    required this.listening,
     required this.status,
     required this.microphone,
     required this.onSend,
     required this.onSettings,
     required this.onDiagnostics,
     required this.onProbeMicrophone,
+    required this.onMicTap,
   });
 
   final List<ChatTurn> turns;
   final bool busy;
+  final bool listening;
   final String status;
   final MomMicrophoneStatus microphone;
   final Future<void> Function(String) onSend;
   final VoidCallback onSettings;
   final VoidCallback onDiagnostics;
   final Future<void> Function(bool requestPermission) onProbeMicrophone;
+  final Future<void> Function() onMicTap;
 
   @override
   State<MomHomeScreen> createState() => _MomHomeScreenState();
@@ -86,16 +90,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
   }
 
   Future<void> _handleMicTap() async {
-    await widget.onProbeMicrophone(true);
-    if (!mounted) return;
-
-    setState(() {
-      _textMode = true;
-      _caption = 'Use the microphone on your keyboard to talk to me.';
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _textFocus.requestFocus();
-    });
+    await widget.onMicTap();
   }
 
   void _toggleTextMode() {
@@ -170,8 +165,8 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final orbSize = math.min(
-              constraints.maxWidth * 0.62,
-              constraints.maxHeight * 0.44,
+              constraints.maxWidth * 0.82,
+              constraints.maxHeight * 0.54,
             );
             final resolvedOrbSize = orbSize.clamp(180.0, 520.0).toDouble();
 
@@ -181,7 +176,11 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                   top: 16,
                   left: 16,
                   child: _OutlineIconButton(
-                    icon: widget.microphone.available ? Icons.mic : Icons.mic_none,
+                    icon: widget.listening
+                        ? Icons.stop_rounded
+                        : widget.microphone.available
+                            ? Icons.mic
+                            : Icons.mic_none,
                     color: accent,
                     tooltip: widget.microphone.permissionGranted
                         ? 'Use microphone'
@@ -209,7 +208,11 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          widget.busy ? 'Thinking...' : 'Listening...',
+                          widget.busy
+                              ? 'Thinking...'
+                              : widget.listening
+                                  ? 'Listening...'
+                                  : 'Tap the mic',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: constraints.maxWidth < 500 ? 27 : 34,
@@ -228,7 +231,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                           size: resolvedOrbSize,
                           accent: accent,
                           lightMode: !dark,
-                          energized: widget.busy,
+                          energized: widget.busy || widget.listening,
                         ),
                         const SizedBox(height: 18),
                         AnimatedSwitcher(
@@ -279,7 +282,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                   bottom: 28,
                   left: 24,
                   child: Text(
-                    'MOM Beta 0.4',
+                    'MOM 0.5.0',
                     style: TextStyle(
                       color: accent,
                       fontWeight: FontWeight.w600,
