@@ -495,6 +495,13 @@ class _NameStage extends StatelessWidget {
       body:
           'Then pick the MOM you want to meet first. It changes how she talks and reacts, not whether she cares or remembers you.',
       children: [
+        Text(
+          'What’s your name?',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+        const SizedBox(height: 10),
         TextField(
           controller: controller,
           enabled: !finishing,
