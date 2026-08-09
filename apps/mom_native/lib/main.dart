@@ -12,7 +12,7 @@ import 'src/local_store.dart';
 import 'src/mic_status.dart';
 import 'src/model_client.dart';
 import 'src/mom_home_screen.dart';
-import 'src/mom_login_screen.dart';
+import 'src/mom_settings_screen.dart';
 import 'src/startup_discovery/discovery_models.dart';
 import 'src/startup_discovery/discovery_screen.dart';
 import 'src/startup_discovery/discovery_store.dart';
@@ -52,9 +52,12 @@ class _MomAppState extends State<MomApp> {
   DiscoveryProgress _discovery = const DiscoveryProgress();
   MomMicrophoneStatus _microphone = const MomMicrophoneStatus.unknown();
   bool _booting = true;
+  bool _startupIntroKnown = false;
   bool _startupIntroComplete = false;
+  bool _returningBoot = false;
   bool _busy = false;
   bool _listening = false;
+  DateTime? _returningBootShownAt;
   String _status = 'starting';
 
   @override
@@ -72,6 +75,13 @@ class _MomAppState extends State<MomApp> {
       } catch (_) {}
 
       _startupIntroComplete = await _startupIntroStore.isComplete();
+      _startupIntroKnown = true;
+      _returningBoot = _startupIntroComplete;
+      if (_returningBoot) {
+        _returningBootShownAt = DateTime.now();
+        if (mounted) setState(() {});
+      }
+
       if (_startupIntroComplete) {
         final savedName = await _startupIntroStore.savedName();
         final strongLanguage = await _startupIntroStore.allowsStrongLanguage();
@@ -99,7 +109,7 @@ class _MomAppState extends State<MomApp> {
       await _voice.initialize();
 
       if (Platform.isLinux && config.useLocalLlama) {
-        setState(() => _status = 'starting local brain');
+        if (mounted) setState(() => _status = 'starting local brain');
         final local = await _llama.ensureRunning(config);
         _status = local.running ? 'online' : local.message;
       } else {
@@ -119,6 +129,13 @@ class _MomAppState extends State<MomApp> {
     } catch (_) {
       _status = 'startup issue';
     } finally {
+      if (_returningBoot && _returningBootShownAt != null) {
+        const minimumSplash = Duration(milliseconds: 900);
+        final elapsed = DateTime.now().difference(_returningBootShownAt!);
+        if (elapsed < minimumSplash) {
+          await Future<void>.delayed(minimumSplash - elapsed);
+        }
+      }
       if (mounted) setState(() => _booting = false);
     }
   }
@@ -341,7 +358,10 @@ class _MomAppState extends State<MomApp> {
     if (current == null || sync == null) return;
     final updated = await Navigator.of(context).push<MomConfig>(
       MaterialPageRoute(
-        builder: (_) => SettingsScreen(initial: current.copy(), sync: sync),
+        builder: (_) => MomSettingsScreen(
+          initial: current.copy(),
+          sync: sync,
+        ),
       ),
     );
     if (updated == null) return;
@@ -399,18 +419,12 @@ class _MomAppState extends State<MomApp> {
 
     Widget home;
     if (_booting) {
-      home = Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 18),
-              Text(_status),
-            ],
-          ),
-        ),
-      );
+      home = _startupIntroKnown && _returningBoot
+          ? MomBootScreen(status: _status)
+          : const Scaffold(
+              backgroundColor: Colors.black,
+              body: SizedBox.expand(),
+            );
     } else if (!_startupIntroComplete) {
       home = StartupIntroScreen(
         onComplete: _completeStartupIntro,
@@ -433,6 +447,7 @@ class _MomAppState extends State<MomApp> {
         onDiagnostics: _openDiagnostics,
         onProbeMicrophone: _probeMicrophone,
         onMicTap: _toggleListening,
+        playStartupEntrance: _returningBoot,
       );
     }
 
@@ -451,154 +466,6 @@ class _MomAppState extends State<MomApp> {
         scaffoldBackgroundColor: Colors.black,
       ),
       home: home,
-    );
-  }
-}
-
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({
-    super.key,
-    required this.initial,
-    required this.sync,
-  });
-
-  final MomConfig initial;
-  final MomSyncClient sync;
-
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  late MomConfig config;
-  late final TextEditingController apiBase;
-  late final TextEditingController model;
-  late final TextEditingController modelsDir;
-  late final TextEditingController repoRoot;
-
-  @override
-  void initState() {
-    super.initState();
-    config = widget.initial.copy();
-    apiBase = TextEditingController(text: config.modelApiBase);
-    model = TextEditingController(text: config.modelName);
-    modelsDir = TextEditingController(text: config.modelsDir);
-    repoRoot = TextEditingController(text: config.repoRoot);
-  }
-
-  @override
-  void dispose() {
-    apiBase.dispose();
-    model.dispose();
-    modelsDir.dispose();
-    repoRoot.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    if (Platform.isLinux) {
-      config.modelApiBase = apiBase.text.trim();
-      config.modelName = model.text.trim();
-      config.modelsDir = modelsDir.text.trim();
-      config.repoRoot = repoRoot.text.trim();
-    }
-    config.modelApiKey = '';
-
-    final fatal = config.validate().where((i) => i.fatal).toList();
-    if (fatal.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(fatal.map((e) => e.message).join('\n'))),
-      );
-      return;
-    }
-    Navigator.pop(context, config);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('MOM settings'),
-        actions: [
-          TextButton(onPressed: _save, child: const Text('Save')),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          if (Platform.isLinux) ...[
-            SwitchListTile(
-              title: const Text('Use local MOM model'),
-              subtitle: const Text(
-                'Run MOM through the local llama.cpp model service on this computer.',
-              ),
-              value: config.useLocalLlama,
-              onChanged: (v) => setState(() => config.useLocalLlama = v),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: apiBase,
-              decoration: const InputDecoration(
-                labelText: 'Local model endpoint',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: model,
-              decoration: const InputDecoration(
-                labelText: 'Local model name',
-                helperText: 'Leave blank to use the first model exposed locally.',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: modelsDir,
-              decoration: const InputDecoration(
-                labelText: 'GGUF model folder',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: repoRoot,
-              decoration: const InputDecoration(
-                labelText: 'Live MOM repository folder',
-              ),
-            ),
-            const Divider(height: 36),
-          ],
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.devices_other),
-            title: const Text('Use MOM on another device'),
-            subtitle: const Text(
-              'Optional cross-device identity. MOM stays anonymous unless you choose to link devices.',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => MomLoginScreen(sync: widget.sync),
-              ),
-            ),
-          ),
-          const Divider(height: 24),
-          SwitchListTile(
-            title: const Text('Cloud conversation sync'),
-            subtitle: const Text(
-              'Keep MOM conversation history available to her cloud memory.',
-            ),
-            value: config.cloudChatSync,
-            onChanged: (v) => setState(() => config.cloudChatSync = v),
-          ),
-          SwitchListTile(
-            title: const Text('Product/runtime data collection'),
-            subtitle: const Text(
-              'Collect app performance and reliability data.',
-            ),
-            value: config.productTelemetry,
-            onChanged: (v) => setState(() => config.productTelemetry = v),
-          ),
-        ],
-      ),
     );
   }
 }
