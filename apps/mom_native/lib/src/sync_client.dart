@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,11 +9,46 @@ import 'package:uuid/uuid.dart';
 
 import 'privacy_filter.dart';
 
+class MomCloudException implements Exception {
+  const MomCloudException({
+    required this.service,
+    required this.code,
+    required this.message,
+    this.statusCode,
+    this.providerStatus,
+    this.retryable = false,
+  });
+
+  final String service;
+  final String code;
+  final String message;
+  final int? statusCode;
+  final int? providerStatus;
+  final bool retryable;
+
+  @override
+  String toString() {
+    final status = statusCode == null ? '' : ' HTTP $statusCode';
+    final provider = providerStatus == null ? '' : ' provider $providerStatus';
+    return 'MOM cloud $service/$code$status$provider: $message';
+  }
+}
+
 class BrainReply {
   const BrainReply({required this.text, required this.model});
 
   final String text;
   final String model;
+}
+
+class BrainProbeResult {
+  const BrainProbeResult({
+    required this.model,
+    required this.latencyMs,
+  });
+
+  final String model;
+  final int latencyMs;
 }
 
 class MomSyncClient {
@@ -49,6 +85,11 @@ class MomSyncClient {
 
   String get loginUrl => _serviceUrl('mom-login');
 
+  String _serviceName(Uri target) {
+    if (target.pathSegments.isEmpty) return 'cloud';
+    return target.pathSegments.last;
+  }
+
   Future<Map<String, dynamic>> _post(
     Map<String, dynamic> payload, {
     bool authenticated = false,
@@ -60,27 +101,116 @@ class MomSyncClient {
       final installation = await _secure.read(key: _installationKey);
       final token = await _secure.read(key: _tokenKey);
       if (installation == null || token == null) {
-        throw StateError('MOM cloud installation is not registered.');
+        throw const MomCloudException(
+          service: 'identity',
+          code: 'installation_not_registered',
+          message: 'This MOM installation is not registered with the cloud.',
+        );
       }
       headers['x-mom-installation'] = installation;
       headers['x-mom-token'] = token;
     }
+
     final target = Uri.parse(endpoint ?? syncUrl);
-    final response = await _http
-        .post(target, headers: headers, body: jsonEncode(payload))
-        .timeout(timeout);
+    final service = _serviceName(target);
+    late http.Response response;
+    try {
+      response = await _http
+          .post(target, headers: headers, body: jsonEncode(payload))
+          .timeout(timeout);
+    } on TimeoutException {
+      throw MomCloudException(
+        service: service,
+        code: 'request_timeout',
+        message: 'The request timed out before $service answered.',
+        retryable: true,
+      );
+    } on SocketException catch (error) {
+      throw MomCloudException(
+        service: service,
+        code: 'network_unreachable',
+        message: error.message,
+        retryable: true,
+      );
+    } on http.ClientException catch (error) {
+      throw MomCloudException(
+        service: service,
+        code: 'network_request_failed',
+        message: error.message,
+        retryable: true,
+      );
+    }
+
     Map<String, dynamic> decoded = {};
     if (response.body.isNotEmpty) {
-      final value = jsonDecode(response.body);
-      if (value is Map<String, dynamic>) decoded = value;
+      try {
+        final value = jsonDecode(response.body);
+        if (value is Map<String, dynamic>) {
+          decoded = value;
+        } else if (response.statusCode >= 200 && response.statusCode < 300) {
+          throw const FormatException('Expected a JSON object.');
+        }
+      } on FormatException catch (error) {
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          throw MomCloudException(
+            service: service,
+            code: 'invalid_server_response',
+            message: error.message,
+            statusCode: response.statusCode,
+            retryable: true,
+          );
+        }
+      }
     }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(
-        'MOM cloud HTTP ${response.statusCode}: ${decoded['error'] ?? response.body}',
-        uri: target,
+      final code = '${decoded['error'] ?? 'http_${response.statusCode}'}';
+      final providerStatus = decoded['provider_status'] is num
+          ? (decoded['provider_status'] as num).round()
+          : null;
+      final retryable = response.statusCode == 408 ||
+          response.statusCode == 429 ||
+          response.statusCode >= 500;
+      throw MomCloudException(
+        service: service,
+        code: code,
+        message: '${decoded['detail'] ?? decoded['error'] ?? response.body}',
+        statusCode: response.statusCode,
+        providerStatus: providerStatus,
+        retryable: retryable,
       );
     }
     return decoded;
+  }
+
+  Future<Map<String, dynamic>> _brainPost(
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    await ensureRegistered();
+    try {
+      return await _post(
+        payload,
+        authenticated: true,
+        endpoint: brainUrl,
+        timeout: timeout,
+      );
+    } on MomCloudException catch (error) {
+      if (error.statusCode != 401 || error.code != 'invalid_installation_token') {
+        rethrow;
+      }
+
+      // Heal a revoked/stale installation once. Do not blindly retry provider
+      // errors or timeouts because the upstream model may still be working.
+      await clearCloudRegistration();
+      await ensureRegistered();
+      return _post(
+        payload,
+        authenticated: true,
+        endpoint: brainUrl,
+        timeout: timeout,
+      );
+    }
   }
 
   Future<bool> health() async {
@@ -163,8 +293,8 @@ class MomSyncClient {
         await _secure.write(key: _installationKey, value: id);
         await _secure.write(key: _tokenKey, value: newToken);
         return;
-      } on HttpException catch (error) {
-        if (attempt == 0 && error.message.contains('device_already_registered')) {
+      } on MomCloudException catch (error) {
+        if (attempt == 0 && error.code == 'device_already_registered') {
           deviceId = 'mom-${const Uuid().v4()}';
           await prefs.setString(_deviceKey, deviceId);
           continue;
@@ -177,6 +307,11 @@ class MomSyncClient {
   Future<bool> registered() async {
     return await _secure.read(key: _installationKey) != null &&
         await _secure.read(key: _tokenKey) != null;
+  }
+
+  Future<void> clearCloudRegistration() async {
+    await _secure.delete(key: _installationKey);
+    await _secure.delete(key: _tokenKey);
   }
 
   Future<Map<String, dynamic>> loginStatus() async {
@@ -237,11 +372,8 @@ class MomSyncClient {
   }
 
   Future<List<String>> brainModels() async {
-    await ensureRegistered();
-    final result = await _post(
+    final result = await _brainPost(
       {'action': 'models'},
-      authenticated: true,
-      endpoint: brainUrl,
       timeout: const Duration(seconds: 30),
     );
     final raw = result['models'];
@@ -250,6 +382,40 @@ class MomSyncClient {
         .whereType<String>()
         .where((value) => value.trim().isNotEmpty)
         .toList(growable: false);
+  }
+
+  Future<BrainProbeResult> brainProbe({String model = ''}) async {
+    final timer = Stopwatch()..start();
+    final result = await _brainPost(
+      {
+        'action': 'chat',
+        'system_prompt':
+            'This is a transport health probe. Reply with one very short acknowledgement.',
+        'history': const <Map<String, String>>[],
+        'user_text': 'Confirm that the response path is working.',
+        'context_mode': 'none',
+        'knowledge_context': '',
+        'model': model.trim(),
+        'temperature': 0,
+        'max_history': 2,
+      },
+      timeout: const Duration(seconds: 45),
+    );
+    timer.stop();
+    final text = result['text'];
+    final resolvedModel = result['model'];
+    if (text is! String || text.trim().isEmpty || resolvedModel is! String) {
+      throw const MomCloudException(
+        service: 'mom-brain',
+        code: 'unexpected_brain_response',
+        message: 'The brain endpoint completed but returned no usable reply.',
+        retryable: true,
+      );
+    }
+    return BrainProbeResult(
+      model: resolvedModel.trim(),
+      latencyMs: timer.elapsedMilliseconds,
+    );
   }
 
   Future<BrainReply> brainChat({
@@ -261,8 +427,7 @@ class MomSyncClient {
     double temperature = 0.72,
     int maxHistory = 30,
   }) async {
-    await ensureRegistered();
-    final result = await _post(
+    final result = await _brainPost(
       {
         'action': 'chat',
         'system_prompt': systemPrompt,
@@ -273,14 +438,17 @@ class MomSyncClient {
         'temperature': temperature,
         'max_history': maxHistory,
       },
-      authenticated: true,
-      endpoint: brainUrl,
       timeout: const Duration(minutes: 5),
     );
     final text = result['text'];
     final resolvedModel = result['model'];
     if (text is! String || text.trim().isEmpty || resolvedModel is! String) {
-      throw const FormatException('MOM brain returned an unexpected response.');
+      throw const MomCloudException(
+        service: 'mom-brain',
+        code: 'unexpected_brain_response',
+        message: 'MOM brain returned an unexpected response.',
+        retryable: true,
+      );
     }
     return BrainReply(text: text.trim(), model: resolvedModel.trim());
   }
