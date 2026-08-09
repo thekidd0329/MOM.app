@@ -82,7 +82,9 @@ class MomBargeInController {
 
     final current = _currentChunkIndex;
     final resumeIndex = current ?? _completedCount;
-    final boundedResumeIndex = resumeIndex.clamp(0, _chunks.length);
+    final boundedResumeIndex = resumeIndex < 0
+        ? 0
+        : (resumeIndex > _chunks.length ? _chunks.length : resumeIndex);
     final completed = _chunks.take(_completedCount).join(' ').trim();
     final resume = _chunks.skip(boundedResumeIndex).join(' ').trim();
     final thought = InterruptedThought(
