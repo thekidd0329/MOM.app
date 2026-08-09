@@ -1,0 +1,37 @@
+name: Workload 1 Phase 2 State Machine
+
+on:
+  push:
+    branches:
+      - workload1/phase2-voice-state-machine
+  pull_request:
+    branches:
+      - workload1/phase1-mic-pipe
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/workload1-phase2-state-machine.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Voice state-machine tests
+        working-directory: apps/mom_native
+        run: flutter test test/voice_state_test.dart
+      - name: Full Flutter suite
+        working-directory: apps/mom_native
+        run: flutter test
