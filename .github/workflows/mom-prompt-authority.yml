@@ -1,0 +1,21 @@
+name: MOM Prompt Authority
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/functions/mom-brain/**"
+      - "tools/test_mom_brain_prompt_authority.py"
+      - ".github/workflows/mom-prompt-authority.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify server-owned MOM prompt boundary
+        run: python3 tools/test_mom_brain_prompt_authority.py
