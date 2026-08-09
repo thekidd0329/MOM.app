@@ -112,7 +112,11 @@ class MomVoiceService {
     _listeningState = null;
   }
 
-  Future<void> speak(String text) async {
+  Future<void> speak(
+    String text, {
+    void Function()? onSynthesisStart,
+    void Function()? onPlaybackStart,
+  }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
@@ -120,6 +124,7 @@ class MomVoiceService {
     final assets = await _prepareVoiceAssets();
     if (generation != _speechGeneration) return;
 
+    onSynthesisStart?.call();
     final request = _SynthesisRequest(
       modelPath: assets.model.path,
       voicePath: assets.voice.path,
@@ -147,6 +152,7 @@ class MomVoiceService {
     }
 
     final completed = _player.onPlayerComplete.first;
+    onPlaybackStart?.call();
     await _player.play(DeviceFileSource(output.path));
     _playingFile = output;
     await completed.timeout(
