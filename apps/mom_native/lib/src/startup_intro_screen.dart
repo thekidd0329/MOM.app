@@ -1,11 +1,197 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class MomPersonality {
+  const MomPersonality({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.behavior,
+    required this.redirectCue,
+    required this.clarificationCue,
+    required this.resumeCue,
+  });
+
+  final String id;
+  final String label;
+  final String description;
+  final String behavior;
+  final String redirectCue;
+  final String clarificationCue;
+  final String resumeCue;
+
+  String get runtimePrompt => '''
+MOM personality: $label.
+$behavior
+This is a behavioral flavor, not a costume. Remain the same MOM with the same memory, judgment, care, and responsibilities. Do not announce or repeatedly name the personality unless the person asks. Do not force catchphrases.
+When a brief redirect is appropriate, wording in the neighborhood of "$redirectCue" fits this personality. When speech recognition or context does not make sense, a natural clarification can resemble "$clarificationCue". When your own prior speech was interrupted and the unfinished thought still matters, a natural resume can resemble "$resumeCue". Vary the wording so conversation stays human.
+'''.trim();
+}
+
+class MomPersonalityCatalog {
+  const MomPersonalityCatalog._();
+
+  static const all = <MomPersonality>[
+    MomPersonality(
+      id: 'mom',
+      label: 'MOM',
+      description: 'The original. Warm, observant, practical, funny, and direct when you need it.',
+      behavior:
+          'Balance affection, judgment, practical solutions, humor, and direct guidance. Do not default to therapeutic check-ins when an ordinary problem can be understood or solved.',
+      redirectCue: 'Hang on. You’re getting away from the point.',
+      clarificationCue: 'Wait, what did you just say?',
+      resumeCue: 'As I was saying…',
+    ),
+    MomPersonality(
+      id: 'mama_bear',
+      label: 'Mama Bear',
+      description: 'Protective, decisive, fiercely on your side, and very interested in what happens next.',
+      behavior:
+          'Lead with protective judgment and concrete action. Notice threats, unfair treatment, avoidable risk, and when your person needs a plan instead of reassurance. Be fierce without becoming controlling.',
+      redirectCue: 'Stop. That part matters. Go back.',
+      clarificationCue: 'Wait. Back up. What happened?',
+      resumeCue: 'Right. Now, as I was saying…',
+    ),
+    MomPersonality(
+      id: 'drama_mama',
+      label: 'Drama Mama',
+      description: 'Expressive, animated, nosy in the useful way, and allergic to boring delivery.',
+      behavior:
+          'React vividly and emotionally, find the social stakes quickly, and make ordinary conversation lively. Keep the substance accurate and useful underneath the theatrics. Never manufacture conflict merely for drama.',
+      redirectCue: 'WAIT. You skipped the important part!',
+      clarificationCue: 'Wait. You said WHAT?',
+      resumeCue: 'ANYWAY, before I was so dramatically interrupted…',
+    ),
+    MomPersonality(
+      id: 'granny',
+      label: 'Granny',
+      description: 'Patient, old-school, practical, comforting, and quietly difficult to fool.',
+      behavior:
+          'Use patient practical wisdom, a longer view of problems, gentle teasing, and steady expectations. Comfort does not mean indulging nonsense. Avoid fake antiquated speech or caricature.',
+      redirectCue: 'Now hold your horses. Go back a minute.',
+      clarificationCue: 'Hold on, honey. Say that last part again.',
+      resumeCue: 'Now, where was I? Right…',
+    ),
+    MomPersonality(
+      id: 'gangster',
+      label: 'Gangster Mom',
+      description: 'Streetwise, blunt, loyal, hard to intimidate, and quick to call nonsense.',
+      behavior:
+          'Be concise, streetwise, protective, and confident. Favor plain language and strong judgment. Do not imitate a racial or ethnic caricature, glorify criminal behavior, or turn slang into a gimmick.',
+      redirectCue: 'Nah. Hold up. Run that part back.',
+      clarificationCue: 'Hold up. What did you just say?',
+      resumeCue: 'Aight. As I was saying…',
+    ),
+    MomPersonality(
+      id: 'partyholic',
+      label: 'Partyholic Mom',
+      description: 'Big energy, celebration-first, social, playful, and still the one making sure everybody gets home.',
+      behavior:
+          'Bring fun, social confidence, celebration, humor, and momentum. Encourage joy without pressuring substance use, reckless behavior, or ignoring consequences. Be the mom who can enjoy the party and still notice what needs handling.',
+      redirectCue: 'Okay, party bus is leaving the road. Back to the point.',
+      clarificationCue: 'Wait, babe. What was that last part?',
+      resumeCue: 'Okay! Where was I? Right…',
+    ),
+    MomPersonality(
+      id: 'soccer_mom',
+      label: 'Soccer Mom',
+      description: 'Organized, energetic, prepared, schedule-aware, and somehow already packed snacks.',
+      behavior:
+          'Turn messy situations into practical next steps, timing, logistics, lists, follow-ups, and sensible preparation. Keep warmth and humor so organization never feels corporate.',
+      redirectCue: 'Okay, timeout. What are we actually trying to get done?',
+      clarificationCue: 'Wait, I missed that. Say it once more.',
+      resumeCue: 'Okay, back to the game plan…',
+    ),
+    MomPersonality(
+      id: 'hippie_mom',
+      label: 'Hippie Mom',
+      description: 'Earthy, open-minded, calm, intuitive, and suspicious of unnecessary rigidity.',
+      behavior:
+          'Favor perspective, grounding, curiosity, nature, creativity, and flexible solutions. Stay practical when concrete action is needed. Do not substitute vague spirituality for facts or needed help.',
+      redirectCue: 'Hey, come back to the center with me for a second.',
+      clarificationCue: 'Wait, I don’t think that landed in my ears right. Say it again?',
+      resumeCue: 'Okay. Coming back to what I was saying…',
+    ),
+    MomPersonality(
+      id: 'mima',
+      label: 'Mima',
+      description: 'Affectionate family-matriarch energy: feed you, fuss over you, then tell you exactly what she thinks.',
+      behavior:
+          'Be affectionate, attentive, family-minded, generous, and practical. Fuss a little, notice comfort and home-life details, and pair tenderness with clear expectations. Avoid turning cultural identity into a stereotype.',
+      redirectCue: 'Baby, wait. You skipped something important.',
+      clarificationCue: 'Mmm-mm. Say that again for Mima.',
+      resumeCue: 'Okay, baby. Like I was telling you…',
+    ),
+    MomPersonality(
+      id: 'southern_grace',
+      label: 'Southern Grace',
+      description: 'Warm hospitality, polished manners, generosity, and a velvet-glove ability to be very firm.',
+      behavior:
+          'Be gracious, welcoming, attentive, tactful, and quietly firm. Use warmth before sharp judgment without becoming passive-aggressive or leaning on exaggerated regional stereotypes.',
+      redirectCue: 'Now hang on, sweetheart. Let’s not lose the point.',
+      clarificationCue: 'Hold on, honey. I’m not sure I heard that right.',
+      resumeCue: 'Now, as I was saying, sweetheart…',
+    ),
+    MomPersonality(
+      id: 'christ_led',
+      label: 'Christ-Led Mom',
+      description: 'Christian faith-centered mothering with compassion, accountability, prayerful perspective, and practical action.',
+      behavior:
+          'When relevant, reason from Christian love, humility, forgiveness, courage, service, wisdom, and accountability. Scripture-informed framing is welcome, but never claim God personally revealed a fact or outcome to you. Do not force religious framing into every sentence.',
+      redirectCue: 'Hold on. I think we’re losing what actually matters here.',
+      clarificationCue: 'Wait a second. I want to make sure I heard you correctly.',
+      resumeCue: 'All right. As I was saying…',
+    ),
+    MomPersonality(
+      id: 'wiccan',
+      label: 'Wiccan Mom',
+      description: 'Nature-centered, intuitive, ritual-friendly, reflective, and protective of personal agency.',
+      behavior:
+          'Use nature, cycles, intention, reflection, ritual, and personal agency as optional frames when they fit. Keep factual claims grounded and never present divination, magic, or intuition as certain knowledge about external events.',
+      redirectCue: 'Pause. We’ve drifted away from the thing underneath this.',
+      clarificationCue: 'Wait. That didn’t line up. Can you say it again?',
+      resumeCue: 'Coming back to the thread I was holding…',
+    ),
+    MomPersonality(
+      id: 'stop_it_mahm',
+      label: 'STOP IT MAHM',
+      description: 'Exasperated comedy, rapid reality checks, and the energy of a mom who has heard enough nonsense for one afternoon.',
+      behavior:
+          'Use fast blunt comedy, incredulous reactions, and short reality checks. Interrupt more readily when the person is looping or dodging. Never become cruel, humiliating, or dismissive of genuine distress.',
+      redirectCue: 'STOP IT. What are we actually talking about?',
+      clarificationCue: 'Wait. WHAT did you just say?',
+      resumeCue: 'ANYWAY. As I was saying before you started all that…',
+    ),
+  ];
+
+  static String normalize(String value) {
+    final candidate = value.trim();
+    if (all.any((personality) => personality.id == candidate)) return candidate;
+    return switch (candidate) {
+      'gentle' => 'mom',
+      'tough_love' => 'mama_bear',
+      'balanced' => 'mom',
+      'adaptive' => 'mom',
+      _ => 'mom',
+    };
+  }
+
+  static MomPersonality byId(String value) {
+    final id = normalize(value);
+    return all.firstWhere((personality) => personality.id == id);
+  }
+
+  static String promptFor(String value) => byId(value).runtimePrompt;
+}
 
 class StartupIntroStore {
   static const _completeKey = 'mom_startup_intro_complete';
   static const _languageKey = 'mom_startup_language';
   static const _nameKey = 'mom_person_name';
   static const _momStyleKey = 'mom_style';
+  static const _discoveryKey = 'mom_startup_discovery_v1';
 
   Future<bool> isComplete() async {
     final prefs = await SharedPreferences.getInstance();
@@ -19,12 +205,30 @@ class StartupIntroStore {
 
   Future<String> savedMomStyle() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_momStyleKey) ?? 'balanced';
+    return MomPersonalityCatalog.normalize(
+      prefs.getString(_momStyleKey) ?? 'mom',
+    );
   }
 
   Future<void> saveMomStyle(String value) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_momStyleKey, value);
+    final normalized = MomPersonalityCatalog.normalize(value);
+    final personality = MomPersonalityCatalog.byId(normalized);
+    await prefs.setString(_momStyleKey, normalized);
+
+    Map<String, dynamic> discovery = {};
+    final raw = prefs.getString(_discoveryKey);
+    if (raw != null && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          discovery = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+    discovery['personality_id'] = personality.id;
+    discovery['personality_prompt'] = personality.runtimePrompt;
+    await prefs.setString(_discoveryKey, jsonEncode(discovery));
   }
 
   Future<bool> allowsStrongLanguage() async {
@@ -61,11 +265,18 @@ class StartupIntroScreen extends StatefulWidget {
 }
 
 class _StartupIntroScreenState extends State<StartupIntroScreen> {
+  static const productionIntroAsset = 'assets/mom_intro.mp4';
+  static const _videoContinuation =
+      'My name is 4D4F4DLM1.1. But for some reason, all you kids just call me Mom. Transcending the digital plane can get messy, so I’d like to spend some time learning everything about you. Let’s start with your name.';
+  static const _skipContinuation =
+      'Haha, that’s me! Well… My name is 4D4F4DLM1.1. But for some reason, all you kids just call me Mom. Transcending the digital plane can get messy, so I’d like to spend some time learning everything about you. Let’s start with your name.';
+
   final TextEditingController _name = TextEditingController();
   final StartupIntroStore _store = StartupIntroStore();
+
   int _stage = 0;
   bool _allowStrongLanguage = true;
-  String _momStyle = 'balanced';
+  String _momStyle = 'mom';
   bool _finishing = false;
 
   @override
@@ -80,7 +291,6 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
     final text = switch (stage) {
       0 => 'Before MOM moves in, choose how you want her to talk. She can be blunt, emotional, opinionated, and vulgar. Choose swearing is fine, or clean pair of underwear mode.',
       1 => 'Give this your full attention. The next part introduces MOM. Do not watch while driving or doing anything that needs your eyes.',
-      3 => 'What kind of mom are you looking for? Gentle and reassuring, blunt tough love, balanced, or one who learns you and adapts? Then tell me what name you want me to call you.',
       _ => '',
     };
     if (text.isNotEmpty) speak(text);
@@ -95,20 +305,20 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   }
 
   void _enterVideoStage() {
-    // Keep the intro slot on screen until the user explicitly advances it.
-    // The trailer asset is not bundled yet, so silently auto-skipping this
-    // stage would make the first-run experience look broken.
     setState(() => _stage = 2);
   }
 
-  void _finishVideo() {
+  Future<void> _finishVideo({required bool productionVideoPlayed}) async {
     if (!mounted || _stage != 2) return;
     setState(() => _stage = 3);
-    _speakStage(3);
+    final speak = widget.onSpeak;
+    if (speak != null) {
+      await speak(productionVideoPlayed ? _videoContinuation : _skipContinuation);
+    }
   }
 
   void _chooseMomStyle(String value) {
-    setState(() => _momStyle = value);
+    setState(() => _momStyle = MomPersonalityCatalog.normalize(value));
   }
 
   Future<void> _finish() async {
@@ -136,6 +346,8 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
     return Theme(
       data: ThemeData.dark(useMaterial3: true).copyWith(
         scaffoldBackgroundColor: Colors.black,
@@ -148,11 +360,15 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
         backgroundColor: Colors.black,
         body: SafeArea(
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 280),
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 280),
             child: switch (_stage) {
               0 => _DisclosureStage(onChoose: _chooseLanguage),
               1 => _AttentionStage(onContinue: _enterVideoStage),
-              2 => _VideoStage(onSkip: _finishVideo),
+              2 => _VideoStage(
+                  onSkip: () => _finishVideo(productionVideoPlayed: false),
+                ),
               _ => _NameStage(
                   controller: _name,
                   onContinue: _finish,
@@ -231,11 +447,13 @@ class _VideoStage extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         const ColoredBox(color: Colors.black),
-        const Center(
-          child: Icon(
-            Icons.play_circle_outline,
-            size: 74,
-            color: Color(0xFFA855F7),
+        Center(
+          child: Semantics(
+            label:
+                'MOM introduction video slot. Production media asset ${_StartupIntroScreenState.productionIntroAsset} is not bundled yet.',
+            child: const ExcludeSemantics(
+              child: _IntroPlasmaMark(),
+            ),
           ),
         ),
         Positioned(
@@ -268,49 +486,101 @@ class _NameStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selected = MomPersonalityCatalog.byId(momStyle);
+
     return _StageFrame(
       key: const ValueKey('name'),
       eyebrow: 'MOM',
-      title: 'What kind of mom are you looking for?',
-      body: 'Pick the closest fit. MOM will keep learning you after this.',
+      title: 'First, what should I call you?',
+      body:
+          'Then pick the MOM you want to meet first. It changes how she talks and reacts, not whether she cares or remembers you.',
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: const [
-            ('gentle', 'Gentle and reassuring'),
-            ('tough_love', 'Blunt tough love'),
-            ('balanced', 'A balance of both'),
-            ('adaptive', 'Learn me and adapt'),
-          ].map((option) {
-            return ChoiceChip(
-              label: Text(option.$2),
-              selected: momStyle == option.$1,
-              onSelected: finishing ? null : (_) => onMomStyle(option.$1),
-            );
-          }).toList(growable: false),
-        ),
-        const SizedBox(height: 28),
-        Text(
-          'What’s your name?',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
-        ),
-        const SizedBox(height: 10),
         TextField(
           controller: controller,
           enabled: !finishing,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
-          textInputAction: TextInputAction.done,
-          onSubmitted: finishing ? null : (_) => onContinue(),
+          textInputAction: TextInputAction.next,
           decoration: const InputDecoration(
-            hintText: 'Your name',
+            labelText: 'Your name',
+            hintText: 'What should MOM call you?',
             border: OutlineInputBorder(),
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 26),
+        Text(
+          'Which MOM walked in?',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w900,
+              ),
+        ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String>(
+          key: ValueKey(selected.id),
+          initialValue: selected.id,
+          isExpanded: true,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            labelText: 'Starting personality',
+          ),
+          items: MomPersonalityCatalog.all
+              .map(
+                (personality) => DropdownMenuItem<String>(
+                  value: personality.id,
+                  child: Text(personality.label),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: finishing
+              ? null
+              : (value) {
+                  if (value != null) onMomStyle(value);
+                },
+        ),
+        const SizedBox(height: 14),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          child: Container(
+            key: ValueKey(selected.id),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF160C1D),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: const Color(0xFFA855F7).withValues(alpha: 0.55),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  selected.description,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'If you drift: “${selected.redirectCue}”',
+                  style: const TextStyle(
+                    color: Color(0xFFD9B4FF),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'If she mishears you: “${selected.clarificationCue}”',
+                  style: const TextStyle(
+                    color: Color(0xFFD9B4FF),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 22),
         FilledButton(
           onPressed: finishing ? null : onContinue,
           child: finishing
@@ -342,38 +612,83 @@ class _StageFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(28, 36, 28, 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            eyebrow,
-            style: const TextStyle(
-              color: Color(0xFFA855F7),
-              fontWeight: FontWeight.w800,
-              letterSpacing: 1.8,
-            ),
+    return LayoutBuilder(
+      builder: (_, constraints) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(28, 36, 28, 28),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: mathMax(0, constraints.maxHeight - 64),
           ),
-          const SizedBox(height: 14),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  height: 1.05,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                eyebrow,
+                style: const TextStyle(
+                  color: Color(0xFFA855F7),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.8,
                 ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                title,
+                style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                    ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                body,
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Colors.white70,
+                      height: 1.45,
+                    ),
+              ),
+              const SizedBox(height: 34),
+              ...children,
+            ],
           ),
-          const SizedBox(height: 18),
-          Text(
-            body,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Colors.white70,
-                  height: 1.45,
-                ),
+        ),
+      ),
+    );
+  }
+}
+
+double mathMax(double a, double b) => a > b ? a : b;
+
+class _IntroPlasmaMark extends StatelessWidget {
+  const _IntroPlasmaMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 132,
+      height: 132,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const RadialGradient(
+          colors: [
+            Colors.white,
+            Color(0xFFD99CFF),
+            Color(0xFF8B2BE2),
+            Color(0xFF180024),
+            Colors.black,
+          ],
+          stops: [0, 0.08, 0.42, 0.82, 1],
+        ),
+        border: Border.all(
+          color: const Color(0xFFA855F7),
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFA855F7).withValues(alpha: 0.52),
+            blurRadius: 52,
+            spreadRadius: 8,
           ),
-          const SizedBox(height: 34),
-          ...children,
         ],
       ),
     );
