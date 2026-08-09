@@ -90,7 +90,7 @@ class MomVoiceService {
     onState(true);
     try {
       await _speech.listen(
-        listenOptions: const SpeechListenOptions(
+        listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: true,
         ),
