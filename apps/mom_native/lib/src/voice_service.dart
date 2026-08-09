@@ -24,10 +24,20 @@ class MomVoiceService {
   Future<_VoiceAssets>? _assetsFuture;
   int _speechGeneration = 0;
   File? _playingFile;
+  void Function(bool listening)? _listeningState;
   bool get listening => _speech.isListening;
 
   Future<bool> initialize() async {
-    _speechReady = await _speech.initialize();
+    _speechReady = await _speech.initialize(
+      onStatus: (status) {
+        if (status == 'listening') {
+          _listeningState?.call(true);
+        } else if (status == 'notListening' || status == 'done') {
+          _listeningState?.call(false);
+        }
+      },
+      onError: (_) => _listeningState?.call(false),
+    );
     unawaited(_warmVoiceAssets());
     return _speechReady;
   }
@@ -71,26 +81,35 @@ class MomVoiceService {
     required void Function(bool listening) onState,
   }) async {
     if (!_speechReady) await initialize();
+    _listeningState = onState;
     if (!_speechReady) {
       onState(false);
       return;
     }
 
     onState(true);
-    await _speech.listen(
-      partialResults: true,
-      cancelOnError: true,
-      onResult: (result) {
-        if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
-          onFinal(result.recognizedWords.trim());
-          onState(false);
-        }
-      },
-    );
+    try {
+      await _speech.listen(
+        partialResults: true,
+        cancelOnError: true,
+        onResult: (result) {
+          if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
+            onFinal(result.recognizedWords.trim());
+            onState(false);
+          }
+        },
+      );
+      if (!_speech.isListening) onState(false);
+    } catch (_) {
+      onState(false);
+      rethrow;
+    }
   }
 
   Future<void> stopListening() async {
     await _speech.stop();
+    _listeningState?.call(false);
+    _listeningState = null;
   }
 
   Future<void> speak(String text) async {
@@ -127,8 +146,18 @@ class MomVoiceService {
       return;
     }
 
+    final completed = _player.onPlayerComplete.first;
     await _player.play(DeviceFileSource(output.path));
     _playingFile = output;
+    await completed.timeout(
+      const Duration(minutes: 2),
+      onTimeout: () {},
+    );
+
+    if (generation == _speechGeneration && await output.exists()) {
+      await output.delete();
+      _playingFile = null;
+    }
   }
 
   Future<void> _downloadIfMissing(File file, String url) async {
@@ -174,6 +203,8 @@ class MomVoiceService {
 
   Future<void> dispose() async {
     _speechGeneration++;
+    _listeningState?.call(false);
+    _listeningState = null;
     await _speech.stop();
     await _player.stop();
     await _player.dispose();
