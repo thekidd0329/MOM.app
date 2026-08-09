@@ -8,130 +8,6 @@ import 'local_store.dart';
 import 'mic_status.dart';
 import 'mom_build_info.dart';
 
-class MomBootScreen extends StatelessWidget {
-  const MomBootScreen({super.key, required this.status});
-
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    const accent = Color(0xFFA855F7);
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final orbSize = math.min(constraints.maxWidth * 0.34, 164.0)
-                .clamp(116.0, 164.0)
-                .toDouble();
-            final letterSize = (orbSize * 1.58).clamp(132.0, 260.0).toDouble();
-            return Stack(
-              children: [
-                Center(
-                  child: Transform.translate(
-                    offset: const Offset(0, -28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text(
-                              'M',
-                              style: TextStyle(
-                                color: accent,
-                                fontSize: letterSize,
-                                height: 0.82,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -12,
-                                shadows: [
-                                  Shadow(
-                                    color: accent.withOpacity(0.32),
-                                    blurRadius: 22,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Transform.translate(
-                              offset: const Offset(0, 4),
-                              child: _ElectricOrb(
-                                size: orbSize,
-                                accent: accent,
-                                lightMode: false,
-                                energized: true,
-                              ),
-                            ),
-                            Text(
-                              'M',
-                              style: TextStyle(
-                                color: accent,
-                                fontSize: letterSize,
-                                height: 0.82,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -12,
-                                shadows: [
-                                  Shadow(
-                                    color: accent.withOpacity(0.32),
-                                    blurRadius: 22,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(width: 72, height: 2, color: accent.withOpacity(0.78)),
-                            const SizedBox(width: 16),
-                            const Text(
-                              'app',
-                              style: TextStyle(
-                                color: accent,
-                                fontSize: 62,
-                                height: 0.9,
-                                fontWeight: FontWeight.w200,
-                                letterSpacing: 5,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Container(width: 72, height: 2, color: accent.withOpacity(0.78)),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 24,
-                  child: AnimatedOpacity(
-                    opacity: status == 'online' ? 0.0 : 0.58,
-                    duration: const Duration(milliseconds: 250),
-                    child: Text(
-                      status,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: accent,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
 class MomHomeScreen extends StatefulWidget {
   const MomHomeScreen({
     super.key,
@@ -374,7 +250,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                             color: accent,
                             shadows: [
                               Shadow(
-                                color: accent.withOpacity(0.28),
+                                color: accent.withValues(alpha: 0.28),
                                 blurRadius: 14,
                               ),
                             ],
@@ -429,7 +305,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                                         fontWeight: FontWeight.w600,
                                         shadows: [
                                           Shadow(
-                                            color: accent.withOpacity(0.24),
+                                            color: accent.withValues(alpha: 0.24),
                                             blurRadius: 10,
                                           ),
                                         ],
@@ -500,7 +376,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                             border: Border.all(color: accent, width: 2),
                             boxShadow: [
                               BoxShadow(
-                                color: accent.withOpacity(0.10),
+                                color: accent.withValues(alpha: 0.10),
                                 blurRadius: 10,
                               ),
                             ],
@@ -529,7 +405,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(18),
                               border: Border.all(
-                                color: accent.withOpacity(0.72),
+                                color: accent.withValues(alpha: 0.72),
                                 width: 1.4,
                               ),
                             ),
@@ -662,18 +538,18 @@ class _WorkflowZapPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 7
         ..strokeCap = StrokeCap.round
-        ..color = accent.withOpacity(0.22 * alpha)
+        ..color = accent.withValues(alpha: 0.22 * alpha)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
       final hot = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2.1
         ..strokeCap = StrokeCap.round
-        ..color = Colors.white.withOpacity(0.84 * alpha);
+        ..color = Colors.white.withValues(alpha: 0.84 * alpha);
       final purple = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3.4
         ..strokeCap = StrokeCap.round
-        ..color = accent.withOpacity(0.74 * alpha);
+        ..color = accent.withValues(alpha: 0.74 * alpha);
       canvas.drawPath(path, glow);
       canvas.drawPath(path, purple);
       canvas.drawPath(path, hot);
@@ -709,7 +585,7 @@ class _OutlineIconButton extends StatelessWidget {
         border: Border.all(color: color, width: 2),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             blurRadius: 10,
           ),
         ],
@@ -782,12 +658,12 @@ class _ElectricOrbState extends State<_ElectricOrb>
                     borderRadius: BorderRadius.circular(999),
                     gradient: RadialGradient(
                       colors: [
-                        widget.accent.withOpacity(
-                          widget.lightMode
+                        widget.accent.withValues(
+                          alpha: widget.lightMode
                               ? 0.15 + 0.08 * pulse
                               : 0.25 + 0.12 * pulse,
                         ),
-                        widget.accent.withOpacity(0),
+                        widget.accent.withValues(alpha: 0),
                       ],
                     ),
                   ),
@@ -837,8 +713,8 @@ class _ElectricOrbPainter extends CustomPainter {
     final heat = energized ? 1.0 : 0.72;
 
     final outerGlow = Paint()
-      ..color = accent.withOpacity(
-        (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
+      ..color = accent.withValues(
+        alpha: (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
       )
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.18);
     canvas.drawCircle(center, radius * (0.98 + 0.025 * pulse), outerGlow);
@@ -848,9 +724,9 @@ class _ElectricOrbPainter extends CustomPainter {
         center: const Alignment(-0.18, -0.22),
         radius: 1.05,
         colors: [
-          Colors.white.withOpacity(lightMode ? 0.97 : 0.93),
-          const Color(0xFFE9C5FF).withOpacity(0.98),
-          accent.withOpacity(0.94),
+          Colors.white.withValues(alpha: lightMode ? 0.97 : 0.93),
+          const Color(0xFFE9C5FF).withValues(alpha: 0.98),
+          accent.withValues(alpha: 0.94),
           const Color(0xFF5B0FA3),
           const Color(0xFF140020),
         ],
@@ -866,7 +742,7 @@ class _ElectricOrbPainter extends CustomPainter {
     final deepGlow = Paint()
       ..shader = RadialGradient(
         colors: [
-          accent.withOpacity(0.14 + 0.08 * pulse),
+          accent.withValues(alpha: 0.14 + 0.08 * pulse),
           const Color(0x00140020),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: radius * 0.88));
@@ -875,11 +751,11 @@ class _ElectricOrbPainter extends CustomPainter {
     final ringPaintBack = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(0.8, radius * 0.005)
-      ..color = accent.withOpacity(lightMode ? 0.20 : 0.28);
+      ..color = accent.withValues(alpha: lightMode ? 0.20 : 0.28);
     final ringPaintFront = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF5E6FF).withOpacity(0.32 + 0.12 * pulse)
+      ..color = const Color(0xFFF5E6FF).withValues(alpha: 0.32 + 0.12 * pulse)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
     for (var r = 0; r < 4; r++) {
@@ -903,14 +779,14 @@ class _ElectricOrbPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(0.55, radius * 0.004)
-      ..color = accent.withOpacity(0.48 * heat);
+      ..color = accent.withValues(alpha: 0.48 * heat);
 
     final hot = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF8EEFF).withOpacity(0.88 * heat)
+      ..color = const Color(0xFFF8EEFF).withValues(alpha: 0.88 * heat)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
     final filamentCount = energized ? 34 : 26;
@@ -970,10 +846,10 @@ class _ElectricOrbPainter extends CustomPainter {
     final core = Paint()
       ..shader = RadialGradient(
         colors: [
-          Colors.white.withOpacity(0.98),
-          const Color(0xFFF3DEFF).withOpacity(0.92),
-          accent.withOpacity(0.55),
-          accent.withOpacity(0),
+          Colors.white.withValues(alpha: 0.98),
+          const Color(0xFFF3DEFF).withValues(alpha: 0.92),
+          accent.withValues(alpha: 0.55),
+          accent.withValues(alpha: 0),
         ],
         stops: const [0.0, 0.22, 0.52, 1.0],
       ).createShader(
@@ -989,7 +865,7 @@ class _ElectricOrbPainter extends CustomPainter {
     final rimGlow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(4.0, radius * 0.035)
-      ..color = accent.withOpacity((lightMode ? 0.12 : 0.20) * heat)
+      ..color = accent.withValues(alpha: (lightMode ? 0.12 : 0.20) * heat)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05);
     canvas.drawCircle(center, radius, rimGlow);
 
@@ -999,11 +875,11 @@ class _ElectricOrbPainter extends CustomPainter {
       ..shader = SweepGradient(
         transform: GradientRotation(spin),
         colors: [
-          accent.withOpacity(0.35),
-          const Color(0xFFF4E4FF).withOpacity(0.95),
-          accent.withOpacity(0.45),
-          const Color(0xFF7D26C9).withOpacity(0.75),
-          accent.withOpacity(0.35),
+          accent.withValues(alpha: 0.35),
+          const Color(0xFFF4E4FF).withValues(alpha: 0.95),
+          accent.withValues(alpha: 0.45),
+          const Color(0xFF7D26C9).withValues(alpha: 0.75),
+          accent.withValues(alpha: 0.35),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: radius));
     canvas.drawCircle(center, radius, edge);
