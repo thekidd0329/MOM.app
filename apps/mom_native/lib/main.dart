@@ -325,14 +325,39 @@ class _MomAppState extends State<MomApp> {
 
     final started = DateTime.now();
     final client = ModelClient(config.copy());
+    final voiceDeltas = StreamController<String>();
+    Object? voiceError;
+    final voiceFuture = _voice
+        .speakStream(
+          voiceDeltas.stream,
+          onSynthesisStart: () {
+            if (_voiceState.state == MomVoiceState.thinking) {
+              _setVoiceState(MomVoiceState.synthesizing);
+            }
+          },
+          onPlaybackStart: () {
+            if (_voiceState.state == MomVoiceState.synthesizing) {
+              _setVoiceState(MomVoiceState.speaking);
+            }
+          },
+        )
+        .catchError((Object error) {
+      voiceError = error;
+    });
+
     try {
       final knowledge = _knowledge.contextFor(text);
-      final reply = await client.chat(
+      final reply = await client.chatStream(
         systemPrompt: _systemPrompt,
         history: prior,
         userText: text.trim(),
         knowledgeContext: knowledge,
+        onDelta: (delta) {
+          if (!voiceDeltas.isClosed) voiceDeltas.add(delta);
+        },
       );
+      if (!voiceDeltas.isClosed) await voiceDeltas.close();
+
       final assistantTurn = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
@@ -344,6 +369,7 @@ class _MomAppState extends State<MomApp> {
           'output_mode': 'orb_caption',
           'caption_display': 'immediate',
           'caption_persists': true,
+          'brain_streamed': true,
         },
       );
       await _store.append(assistantTurn);
@@ -352,34 +378,23 @@ class _MomAppState extends State<MomApp> {
           _turns = [..._turns, assistantTurn];
           _captionTurns = [..._captionTurns, assistantTurn];
           _status = 'online';
-          _voiceState.transition(MomVoiceState.synthesizing);
         });
-      } else {
-        _voiceState.transition(MomVoiceState.synthesizing);
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
 
-      try {
-        await _voice.speak(
-          reply.text,
-          onPlaybackStart: () {
-            if (_voiceState.state == MomVoiceState.synthesizing) {
-              _setVoiceState(MomVoiceState.speaking);
-            }
-          },
-        );
-        if (_voiceState.state == MomVoiceState.speaking ||
-            _voiceState.state == MomVoiceState.synthesizing) {
-          _setVoiceState(MomVoiceState.idle);
-        }
-      } catch (error) {
+      await voiceFuture;
+      if (voiceError != null) {
         if (_voiceState.state != MomVoiceState.error) {
           _setVoiceState(MomVoiceState.error);
         }
         unawaited(_safeEvent(
           'voice_output_error',
-          payload: {'error_type': error.runtimeType.toString()},
+          payload: {'error_type': voiceError.runtimeType.toString()},
         ));
+      } else if (_voiceState.state == MomVoiceState.speaking ||
+          _voiceState.state == MomVoiceState.synthesizing ||
+          _voiceState.state == MomVoiceState.thinking) {
+        _setVoiceState(MomVoiceState.idle);
       }
 
       unawaited(_safeEvent('response_received', payload: {
@@ -388,8 +403,11 @@ class _MomAppState extends State<MomApp> {
         'response_characters': reply.text.length,
         'knowledge_characters': knowledge.length,
         'output_mode': 'orb_caption',
+        'brain_streamed': true,
       }));
     } catch (error) {
+      if (!voiceDeltas.isClosed) await voiceDeltas.close();
+      await voiceFuture;
       if (_voiceState.state != MomVoiceState.error) {
         _setVoiceState(MomVoiceState.error);
       }
@@ -417,6 +435,7 @@ class _MomAppState extends State<MomApp> {
         payload: {'error_type': error.runtimeType.toString()},
       ));
     } finally {
+      if (!voiceDeltas.isClosed) await voiceDeltas.close();
       client.close();
     }
   }
