@@ -1,0 +1,37 @@
+name: Workload 1 Phase 3 Chunked Kokoro
+
+on:
+  push:
+    branches:
+      - workload1/phase3-chunked-kokoro
+  pull_request:
+    branches:
+      - workload1/phase2-voice-state-machine
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/workload1-phase3-chunked-kokoro.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Chunk planner and memory-bound tests
+        working-directory: apps/mom_native
+        run: flutter test test/tts_chunker_test.dart
+      - name: Full Flutter suite
+        working-directory: apps/mom_native
+        run: flutter test
