@@ -29,6 +29,7 @@ class MomConfig {
       'https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync';
   static const defaultBrainUrl =
       'https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain';
+  static const defaultHostedModel = 'Qwen/Qwen2.5-7B-Instruct';
 
   String syncUrl;
   String modelApiBase;
@@ -131,6 +132,7 @@ class ConfigStore {
     final mainRepo = home.isEmpty ? '' : '$home/MomBrain/MOM.app-main';
     final fallbackRepo = home.isEmpty ? '' : '$home/MomBrain';
     final repo = Directory(mainRepo).existsSync() ? mainRepo : fallbackRepo;
+    final savedModel = (prefs.getString('model_name') ?? '').trim();
 
     // Hosted provider credentials belong on the Supabase server now. Remove any
     // legacy on-device copy left by older MOM builds.
@@ -139,7 +141,8 @@ class ConfigStore {
     return MomConfig(
       syncUrl: prefs.getString('sync_url') ?? MomConfig.defaultSyncUrl,
       modelApiBase: prefs.getString('model_api_base') ?? MomConfig.defaultBrainUrl,
-      modelName: prefs.getString('model_name') ?? '',
+      modelName:
+          savedModel.isEmpty ? MomConfig.defaultHostedModel : savedModel,
       modelApiKey: '',
       useLocalLlama: prefs.getBool('use_local_llama') ?? false,
       modelsDir: prefs.getString('models_dir') ?? defaultModels,

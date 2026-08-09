@@ -4,8 +4,8 @@
 Usage:
     python3 tools/verify_android_apk.py <apk> <staged-jni-dir> [manifest]
 
-The staged JNI directory is expected to contain the lib*.so files copied into
-android/app/src/main/jniLibs/arm64-v8a before the Flutter release build. MOM's
+The staged JNI directory contains the runtime dependency closure rooted at
+libcrispasr.so. Every staged runtime library must be present in the APK. MOM's
 required network/microphone declarations are verified before the APK is
 accepted. If no manifest path is supplied, it is derived from the staged JNI
 location.
@@ -51,7 +51,7 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
 
     expected = sorted(path.name for path in staged_dir.glob("lib*.so"))
     if not expected:
-        raise ValueError(f"no staged native libraries found in: {staged_dir}")
+        raise ValueError(f"no staged native runtime libraries found in: {staged_dir}")
     if "libcrispasr.so" not in expected:
         raise ValueError("staged CrispASR library missing before APK verification")
 
@@ -65,6 +65,11 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
     if bad_member is not None:
         raise ValueError(f"APK contains a corrupt member: {bad_member}")
 
+    packaged_arm64 = sorted(
+        Path(name).name
+        for name in packaged
+        if name.startswith("lib/arm64-v8a/") and name.endswith(".so")
+    )
     missing = [
         name
         for name in expected
@@ -72,7 +77,9 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
     ]
     if missing:
         raise ValueError(
-            "APK missing staged native libraries: " + ", ".join(missing)
+            "APK missing staged runtime libraries: "
+            + ", ".join(missing)
+            + f"; staged={expected}; packaged_arm64={packaged_arm64}"
         )
 
     return expected
@@ -103,7 +110,7 @@ def main(argv: list[str]) -> int:
 
     print(
         f"MOM APK verified: {apk} contains all {len(expected)} staged "
-        f"arm64 native libraries and all {len(declarations)} required "
+        f"arm64 runtime libraries and all {len(declarations)} required "
         "manifest declarations"
     )
     return 0

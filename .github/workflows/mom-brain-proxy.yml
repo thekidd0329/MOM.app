@@ -40,6 +40,7 @@ jobs:
         env:
           MOM_SYNC_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync
           MOM_BRAIN_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain
+          MOM_SMOKE_MODEL: Qwen/Qwen2.5-7B-Instruct
         run: |
           set -euo pipefail
 
@@ -91,16 +92,15 @@ jobs:
             -d '{"action":"models"}' \
             "$MOM_BRAIN_URL")"
           echo "$models"
-          model="$(MODELS="$models" python3 - <<'PY'
+          MODELS="$models" python3 - <<'PY'
           import json, os
           data = json.loads(os.environ['MODELS'])
           models = data.get('models') or []
-          assert models, data
-          print(models[0])
+          requested = os.environ['MOM_SMOKE_MODEL']
+          assert requested in models, f'{requested} is not advertised by MOM provider'
           PY
-          )"
 
-          payload="$(MODEL="$model" python3 - <<'PY'
+          payload="$(python3 - <<'PY'
           import json, os
           print(json.dumps({
               'action': 'chat',
@@ -108,7 +108,7 @@ jobs:
               'history': [],
               'user_text': 'Reply with MOM_SERVER_OK.',
               'knowledge_context': '',
-              'model': os.environ['MODEL'],
+              'model': os.environ['MOM_SMOKE_MODEL'],
               'temperature': 0,
               'max_history': 2,
           }))
@@ -126,6 +126,6 @@ jobs:
           import json, os
           data = json.loads(os.environ['CHAT'])
           assert isinstance(data.get('text'), str) and data['text'].strip(), data
-          assert isinstance(data.get('model'), str) and data['model'].strip(), data
+          assert data.get('model') == os.environ['MOM_SMOKE_MODEL'], data
           print('MOM brain proxy end-to-end OK:', data['model'])
           PY

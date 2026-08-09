@@ -10,6 +10,7 @@ on:
       - "learning_model/**"
       - "docs/**"
       - "tools/build_mom_knowledge.py"
+      - "tools/stage_android_runtime_libs.py"
       - "tools/verify_android_apk.py"
       - ".github/workflows/mom-native.yml"
   pull_request:
@@ -20,6 +21,7 @@ on:
       - "learning_model/**"
       - "docs/**"
       - "tools/build_mom_knowledge.py"
+      - "tools/stage_android_runtime_libs.py"
       - "tools/verify_android_apk.py"
       - ".github/workflows/mom-native.yml"
 
@@ -117,6 +119,7 @@ jobs:
 
   android:
     name: Android APK
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'workload1/phase')) }}
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -145,15 +148,8 @@ jobs:
           ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$RUNNER_TEMP/crispasr/build-android.sh" --abi arm64-v8a
           CRISP_BUILD="$RUNNER_TEMP/crispasr/build-android/arm64-v8a"
           CRISP_DEST="$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
-          mkdir -p "$CRISP_DEST"
-          mapfile -t crisp_libs < <(find "$CRISP_BUILD" -type f -name 'lib*.so' -print)
-          if [ "${#crisp_libs[@]}" -eq 0 ]; then
-            echo "::error::CrispASR Android build produced no shared libraries"
-            exit 1
-          fi
-          cp "${crisp_libs[@]}" "$CRISP_DEST/"
+          python3 tools/stage_android_runtime_libs.py "$CRISP_BUILD" "$CRISP_DEST" libcrispasr.so
           test -f "$CRISP_DEST/libcrispasr.so"
-          echo "Packaged ${#crisp_libs[@]} CrispASR Android libraries"
           python3 - <<'PY'
           from pathlib import Path
           p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")

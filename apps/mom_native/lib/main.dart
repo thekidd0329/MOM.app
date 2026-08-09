@@ -226,12 +226,12 @@ class _MomAppState extends State<MomApp> {
       },
       onFinal: (text) {
         if (mounted) setState(() => _listening = false);
-        unawaited(_send(text));
+        unawaited(_send(text, inputMode: 'voice'));
       },
     );
   }
 
-  Future<void> _send(String text) async {
+  Future<void> _send(String text, {String inputMode = 'text'}) async {
     final config = _config;
     if (config == null || _busy || text.trim().isEmpty) return;
     final issues = config.validate().where((e) => e.fatal).toList();
@@ -248,7 +248,7 @@ class _MomAppState extends State<MomApp> {
       content: text.trim(),
       createdAt: DateTime.now(),
       metadata: {
-        'input_mode': 'text',
+        'input_mode': inputMode,
         'microphone': _microphone.toJson(),
       },
     );
@@ -261,7 +261,7 @@ class _MomAppState extends State<MomApp> {
     unawaited(_safeSyncTurn(userTurn));
     unawaited(_safeEvent('chat_sent', payload: {
       'characters': text.length,
-      'input_mode': 'text',
+      'input_mode': inputMode,
       'microphone': _microphone.toJson(),
     }));
 
@@ -297,7 +297,9 @@ class _MomAppState extends State<MomApp> {
         });
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
-      unawaited(_voice.speak(reply.text).catchError((_) {}));
+      try {
+        await _voice.speak(reply.text);
+      } catch (_) {}
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
         'model': reply.model,
