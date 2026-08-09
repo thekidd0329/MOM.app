@@ -109,7 +109,9 @@ class MomVoiceService {
 
   Future<void> _downloadIfMissing(File file, String url) async {
     if (await file.exists() && await file.length() > 1024) return;
+
     final partial = File('${file.path}.part');
+    final backup = File('${file.path}.bad');
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url));
@@ -117,13 +119,31 @@ class MomVoiceService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Voice download failed: ${response.statusCode}');
       }
+
       final sink = partial.openWrite();
       await response.stream.pipe(sink);
-      await partial.rename(file.path);
+      if (!await partial.exists() || await partial.length() <= 1024) {
+        throw const FormatException('Downloaded voice asset is unexpectedly small');
+      }
+
+      if (await backup.exists()) await backup.delete();
+      final hadExisting = await file.exists();
+      if (hadExisting) await file.rename(backup.path);
+      try {
+        await partial.rename(file.path);
+        if (await backup.exists()) await backup.delete();
+      } catch (_) {
+        if (await file.exists()) await file.delete();
+        if (await backup.exists()) await backup.rename(file.path);
+        rethrow;
+      }
     } finally {
       client.close();
-      if (await partial.exists() && !await file.exists()) {
+      if (await partial.exists() && await file.exists()) {
         await partial.delete();
+      }
+      if (await backup.exists() && await file.exists()) {
+        await backup.delete();
       }
     }
   }
