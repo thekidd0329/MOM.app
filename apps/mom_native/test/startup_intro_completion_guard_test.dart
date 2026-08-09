@@ -3,8 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mom_native/src/startup_intro_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   testWidgets('Meet MOM only completes once while save is pending', (tester) async {
     final gate = Completer<void>();
     var calls = 0;
@@ -36,11 +43,12 @@ void main() {
     await tester.tap(meetMom);
     await tester.pump();
 
-    await tester.tap(find.byType(FilledButton).last, warnIfMissed: false);
-    await tester.pump();
-
     expect(calls, 1);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.tap(find.byType(FilledButton).last, warnIfMissed: false);
+    await tester.pump();
+    expect(calls, 1);
 
     gate.complete();
     await tester.pumpAndSettle();
