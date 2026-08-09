@@ -85,11 +85,13 @@ jobs:
         run: |
           set -euo pipefail
           ROOT="$RUNNER_TEMP/mom_deb"
+          VERSION="$(awk '/^version:/ {print $2; exit}' apps/mom_native/pubspec.yaml)"
+          test -n "$VERSION"
           mkdir -p "$ROOT/DEBIAN" "$ROOT/opt/mom" "$ROOT/usr/share/applications"
           cp -a "$RUNNER_TEMP/mom_linux/build/linux/x64/release/bundle/." "$ROOT/opt/mom/"
-          cat > "$ROOT/DEBIAN/control" <<'EOF'
+          cat > "$ROOT/DEBIAN/control" <<EOF
           Package: mom
-          Version: 0.2.1
+          Version: $VERSION
           Section: utils
           Priority: optional
           Architecture: amd64
