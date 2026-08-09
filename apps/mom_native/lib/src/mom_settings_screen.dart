@@ -78,7 +78,7 @@ class _MomSettingsScreenState extends State<MomSettingsScreen> {
     final dark = theme.brightness == Brightness.dark;
     final accent = scheme.primary;
     final panel = dark ? const Color(0xFF0D0912) : const Color(0xFFF8F2FC);
-    final border = accent.withOpacity(dark ? 0.34 : 0.26);
+    final border = accent.withValues(alpha: dark ? 0.34 : 0.26);
 
     return Scaffold(
       backgroundColor: dark ? Colors.black : Colors.white,
@@ -330,13 +330,13 @@ class _BrandHeader extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: accent.withOpacity(0.34)),
+        border: Border.all(color: accent.withValues(alpha: 0.34)),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            accent.withOpacity(dark ? 0.18 : 0.10),
-            accent.withOpacity(dark ? 0.04 : 0.02),
+            accent.withValues(alpha: dark ? 0.18 : 0.10),
+            accent.withValues(alpha: dark ? 0.04 : 0.02),
           ],
         ),
       ),
@@ -358,7 +358,7 @@ class _BrandHeader extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: accent.withOpacity(0.46),
+                  color: accent.withValues(alpha: 0.46),
                   blurRadius: 22,
                   spreadRadius: 2,
                 ),
@@ -441,7 +441,11 @@ class _Divider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Divider(height: 1, thickness: 1, color: color.withOpacity(0.7));
+    return Divider(
+      height: 1,
+      thickness: 1,
+      color: color.withValues(alpha: 0.7),
+    );
   }
 }
 
