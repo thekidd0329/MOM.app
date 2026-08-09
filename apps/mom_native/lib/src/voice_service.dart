@@ -50,15 +50,12 @@ class MomVoiceService {
   Future<void> _warmVoiceAssets() async {
     try {
       await _prepareVoiceAssets();
-    } catch (_) {
-      // Voice download failures must never block startup. speak() retries later.
-    }
+    } catch (_) {}
   }
 
   Future<_VoiceAssets> _prepareVoiceAssets() async {
     final existing = _assetsFuture;
     if (existing != null) return existing;
-
     final future = _loadVoiceAssets();
     _assetsFuture = future;
     try {
@@ -73,7 +70,6 @@ class MomVoiceService {
     final dir = await getApplicationSupportDirectory();
     final voiceDir = Directory('${dir.path}/voice');
     await voiceDir.create(recursive: true);
-
     final model = File('${voiceDir.path}/$_modelName');
     final voice = File('${voiceDir.path}/$_voiceName');
     await _downloadIfMissing(model, _modelUrl);
@@ -91,7 +87,6 @@ class MomVoiceService {
       onState(false);
       return;
     }
-
     onState(true);
     try {
       await _speech.listen(
@@ -124,11 +119,9 @@ class MomVoiceService {
   }) async {
     final chunks = _chunker.chunk(text);
     if (chunks.isEmpty) return;
-
     final generation = ++_speechGeneration;
     final assets = await _prepareVoiceAssets();
     if (generation != _speechGeneration) return;
-
     onSynthesisStart?.call();
     final pending = <int, Future<Uint8List>>{};
 
@@ -141,56 +134,145 @@ class MomVoiceService {
       return Isolate.run(() => _synthesize(request));
     }
 
-    await _player.stop();
-    final previous = _playingFile;
-    if (previous != null && await previous.exists()) {
-      await previous.delete();
-    }
-    _playingFile = null;
-
+    await _preparePlayerForGeneration();
     for (var index = 0; index < chunks.length; index++) {
       if (generation != _speechGeneration) return;
-
-      final prefetchEnd = math.min(
-        chunks.length,
-        index + _maxSynthesizedAhead,
-      );
+      final prefetchEnd = math.min(chunks.length, index + _maxSynthesizedAhead);
       for (var queued = index; queued < prefetchEnd; queued++) {
         pending.putIfAbsent(queued, () => synthesizeChunk(queued));
       }
       if (pending.length > _maxSynthesizedAhead) {
         throw StateError('Kokoro synthesis queue exceeded memory bound');
       }
-
       final wav = await pending.remove(index)!;
       if (generation != _speechGeneration) return;
-
-      final output = File(
-        '${assets.directory.path}/mom-response-$generation-$index.wav',
+      await _playWav(
+        wav,
+        assets: assets,
+        generation: generation,
+        index: index,
+        onPlaybackStart: index == 0 ? onPlaybackStart : null,
       );
-      await output.writeAsBytes(wav, flush: true);
-      if (generation != _speechGeneration) {
-        if (await output.exists()) await output.delete();
-        return;
-      }
-
-      final completed = _player.onPlayerComplete.first;
-      if (index == 0) onPlaybackStart?.call();
-      await _player.play(DeviceFileSource(output.path));
-      _playingFile = output;
-      await completed.timeout(
-        const Duration(minutes: 2),
-        onTimeout: () {},
-      );
-
-      if (await output.exists()) await output.delete();
-      if (identical(_playingFile, output)) _playingFile = null;
     }
+  }
+
+  Future<void> speakStream(
+    Stream<String> deltas, {
+    void Function()? onSynthesisStart,
+    void Function()? onPlaybackStart,
+  }) async {
+    final generation = ++_speechGeneration;
+    final assetsFuture = _prepareVoiceAssets();
+    final assembler = MomStreamingTtsAssembler(chunker: _chunker);
+    final chunks = StreamController<String>();
+    Object? streamError;
+    StackTrace? streamStack;
+
+    final playback = _speakIncomingChunks(
+      chunks.stream,
+      assetsFuture: assetsFuture,
+      generation: generation,
+      onSynthesisStart: onSynthesisStart,
+      onPlaybackStart: onPlaybackStart,
+    );
+
+    try {
+      await for (final delta in deltas) {
+        if (generation != _speechGeneration) break;
+        for (final chunk in assembler.add(delta)) {
+          chunks.add(chunk);
+        }
+      }
+      if (generation == _speechGeneration) {
+        for (final chunk in assembler.close()) {
+          chunks.add(chunk);
+        }
+      }
+    } catch (error, stack) {
+      streamError = error;
+      streamStack = stack;
+    } finally {
+      await chunks.close();
+    }
+
+    await playback;
+    if (streamError != null) {
+      Error.throwWithStackTrace(streamError!, streamStack!);
+    }
+  }
+
+  Future<void> _speakIncomingChunks(
+    Stream<String> chunks, {
+    required Future<_VoiceAssets> assetsFuture,
+    required int generation,
+    void Function()? onSynthesisStart,
+    void Function()? onPlaybackStart,
+  }) async {
+    final assets = await assetsFuture;
+    if (generation != _speechGeneration) return;
+    await _preparePlayerForGeneration();
+    var index = 0;
+    var started = false;
+
+    await for (final chunk in chunks) {
+      if (generation != _speechGeneration) return;
+      if (!started) {
+        onSynthesisStart?.call();
+        started = true;
+      }
+      final request = _SynthesisRequest(
+        modelPath: assets.model.path,
+        voicePath: assets.voice.path,
+        text: chunk,
+      );
+      final wav = await Isolate.run(() => _synthesize(request));
+      if (generation != _speechGeneration) return;
+      await _playWav(
+        wav,
+        assets: assets,
+        generation: generation,
+        index: index,
+        onPlaybackStart: index == 0 ? onPlaybackStart : null,
+      );
+      index++;
+    }
+  }
+
+  Future<void> _preparePlayerForGeneration() async {
+    await _player.stop();
+    final previous = _playingFile;
+    if (previous != null && await previous.exists()) {
+      await previous.delete();
+    }
+    _playingFile = null;
+  }
+
+  Future<void> _playWav(
+    Uint8List wav, {
+    required _VoiceAssets assets,
+    required int generation,
+    required int index,
+    void Function()? onPlaybackStart,
+  }) async {
+    final output = File(
+      '${assets.directory.path}/mom-response-$generation-$index.wav',
+    );
+    await output.writeAsBytes(wav, flush: true);
+    if (generation != _speechGeneration) {
+      if (await output.exists()) await output.delete();
+      return;
+    }
+    final completed = _player.onPlayerComplete.first;
+    onPlaybackStart?.call();
+    await _player.play(DeviceFileSource(output.path));
+    _playingFile = output;
+    await completed.timeout(const Duration(minutes: 2), onTimeout: () {});
+    if (await output.exists()) await output.delete();
+    if (identical(_playingFile, output)) _playingFile = null;
   }
 
   Future<void> _downloadIfMissing(File file, String url) async {
     if (await file.exists() && await file.length() > 1024) return;
-
     final partial = File('${file.path}.part');
     final backup = File('${file.path}.bad');
     final client = http.Client();
@@ -200,13 +282,11 @@ class MomVoiceService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Voice download failed: ${response.statusCode}');
       }
-
       final sink = partial.openWrite();
       await response.stream.pipe(sink);
       if (!await partial.exists() || await partial.length() <= 1024) {
         throw const FormatException('Downloaded voice asset is unexpectedly small');
       }
-
       if (await backup.exists()) await backup.delete();
       final hadExisting = await file.exists();
       if (hadExisting) await file.rename(backup.path);
@@ -220,12 +300,8 @@ class MomVoiceService {
       }
     } finally {
       client.close();
-      if (await partial.exists() && await file.exists()) {
-        await partial.delete();
-      }
-      if (await backup.exists() && await file.exists()) {
-        await backup.delete();
-      }
+      if (await partial.exists() && await file.exists()) await partial.delete();
+      if (await backup.exists() && await file.exists()) await backup.delete();
     }
   }
 
@@ -237,41 +313,26 @@ class MomVoiceService {
     await _player.stop();
     await _player.dispose();
     final playing = _playingFile;
-    if (playing != null && await playing.exists()) {
-      await playing.delete();
-    }
+    if (playing != null && await playing.exists()) await playing.delete();
   }
 }
 
 class _VoiceAssets {
-  const _VoiceAssets({
-    required this.model,
-    required this.voice,
-    required this.directory,
-  });
-
+  const _VoiceAssets({required this.model, required this.voice, required this.directory});
   final File model;
   final File voice;
   final Directory directory;
 }
 
 class _SynthesisRequest {
-  const _SynthesisRequest({
-    required this.modelPath,
-    required this.voicePath,
-    required this.text,
-  });
-
+  const _SynthesisRequest({required this.modelPath, required this.voicePath, required this.text});
   final String modelPath;
   final String voicePath;
   final String text;
 }
 
 Uint8List _synthesize(_SynthesisRequest request) {
-  final session = crisp.CrispasrSession.open(
-    request.modelPath,
-    backend: 'kokoro',
-  );
+  final session = crisp.CrispasrSession.open(request.modelPath, backend: 'kokoro');
   try {
     session.setVoice(request.voicePath);
     final pcm = session.synthesize(request.text);
@@ -284,13 +345,9 @@ Uint8List _synthesize(_SynthesisRequest request) {
 Uint8List _pcmToWav(Float32List pcm, int sampleRate) {
   final dataLength = pcm.length * 2;
   final bytes = ByteData(44 + dataLength);
-
   void text(int offset, String value) {
-    for (var i = 0; i < value.length; i++) {
-      bytes.setUint8(offset + i, value.codeUnitAt(i));
-    }
+    for (var i = 0; i < value.length; i++) bytes.setUint8(offset + i, value.codeUnitAt(i));
   }
-
   text(0, 'RIFF');
   bytes.setUint32(4, 36 + dataLength, Endian.little);
   text(8, 'WAVE');
@@ -304,7 +361,6 @@ Uint8List _pcmToWav(Float32List pcm, int sampleRate) {
   bytes.setUint16(34, 16, Endian.little);
   text(36, 'data');
   bytes.setUint32(40, dataLength, Endian.little);
-
   var offset = 44;
   for (final sample in pcm) {
     final clamped = sample.clamp(-1.0, 1.0);
