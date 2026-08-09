@@ -5,6 +5,17 @@ import 'package:flutter/material.dart';
 
 import 'local_store.dart';
 import 'mic_status.dart';
+import 'mom_personality_screen.dart';
+
+enum _OrbMode {
+  idle,
+  listening,
+  thinking,
+  speaking,
+  interrupted,
+  confused,
+  error,
+}
 
 class MomHomeScreen extends StatefulWidget {
   const MomHomeScreen({
@@ -37,49 +48,95 @@ class MomHomeScreen extends StatefulWidget {
 }
 
 class _MomHomeScreenState extends State<MomHomeScreen> {
+  static const _purple = Color(0xFFA855F7);
+  static const _lavender = Color(0xFFD990FF);
+
   final TextEditingController _controller = TextEditingController();
   final FocusNode _textFocus = FocusNode();
+
   bool _textMode = false;
   String _caption = '';
-  int _captionRun = 0;
   String? _lastCaptionId;
+  int _captionRun = 0;
 
   @override
   void initState() {
     super.initState();
-    _maybeStartLatestCaption();
+    _captureLatestReply();
   }
 
   @override
   void didUpdateWidget(covariant MomHomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.turns.length != widget.turns.length) {
-      _maybeStartLatestCaption();
-    }
+    if (oldWidget.turns.length != widget.turns.length) _captureLatestReply();
   }
 
-  void _maybeStartLatestCaption() {
+  _OrbMode get _mode {
+    if (widget.listening) return _OrbMode.listening;
+    if (widget.busy) return _OrbMode.thinking;
+
+    final status = widget.status.toLowerCase();
+    if (status.contains('speaking') || status.contains('talking')) {
+      return _OrbMode.speaking;
+    }
+    if (status.contains('interrupt')) return _OrbMode.interrupted;
+    if (status.contains('clarif') ||
+        status.contains('didn\'t hear') ||
+        status.contains('did not hear') ||
+        status.contains('say that again')) {
+      return _OrbMode.confused;
+    }
+    if (status.contains('offline') ||
+        status.contains('error') ||
+        status.contains('unavailable') ||
+        status.contains('issue')) {
+      return _OrbMode.error;
+    }
+    return _OrbMode.idle;
+  }
+
+  String get _modeLabel {
+    return switch (_mode) {
+      _OrbMode.listening => 'Listening...',
+      _OrbMode.thinking => 'Thinking...',
+      _OrbMode.speaking => 'MOM',
+      _OrbMode.interrupted => 'I\'m listening.',
+      _OrbMode.confused => 'Wait, what?',
+      _OrbMode.error => 'MOM needs a second.',
+      _OrbMode.idle => 'Ready',
+    };
+  }
+
+  String get _orbSemantics {
+    return switch (_mode) {
+      _OrbMode.listening => 'MOM is listening',
+      _OrbMode.thinking => 'MOM is thinking',
+      _OrbMode.speaking => 'MOM is speaking',
+      _OrbMode.interrupted => 'MOM was interrupted and is listening',
+      _OrbMode.confused => 'MOM needs clarification',
+      _OrbMode.error => 'MOM has a temporary problem',
+      _OrbMode.idle => 'MOM is ready',
+    };
+  }
+
+  void _captureLatestReply() {
     for (final turn in widget.turns.reversed) {
       if (turn.role != 'assistant' || turn.content.trim().isEmpty) continue;
       final id = '${turn.createdAt.microsecondsSinceEpoch}:${turn.content.hashCode}';
-      if (_lastCaptionId == id) return;
+      if (id == _lastCaptionId) return;
       _lastCaptionId = id;
-      unawaited(_playCaption(turn.content));
+      unawaited(_showCaption(turn.content));
       return;
     }
   }
 
-  Future<void> _playCaption(String text) async {
+  Future<void> _showCaption(String text) async {
     final run = ++_captionRun;
-    if (text.trim().isEmpty || !mounted) return;
+    if (!mounted || text.trim().isEmpty) return;
     setState(() => _caption = text.trim());
-
-    // Keep the latest reply visible until MOM says something else. Reading speed
-    // belongs to the user; the UI must not drip-feed text or erase it.
     await Future<void>.delayed(Duration.zero);
     if (!mounted || run != _captionRun) return;
   }
-
 
   String get _captionWindow {
     const maxChars = 260;
@@ -93,6 +150,20 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     await widget.onMicTap();
   }
 
+  Future<void> _openPersonality() async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const MomPersonalityScreen()),
+    );
+    if (!mounted || changed != true) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Got it. That MOM will take over the next time MOM starts.',
+        ),
+      ),
+    );
+  }
+
   void _toggleTextMode() {
     setState(() => _textMode = !_textMode);
     if (_textMode) {
@@ -102,6 +173,15 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     } else {
       _textFocus.unfocus();
     }
+  }
+
+  void _submit() {
+    final text = _controller.text.trim();
+    if (text.isEmpty || widget.busy) return;
+    _controller.clear();
+    _textFocus.unfocus();
+    setState(() => _textMode = false);
+    widget.onSend(text);
   }
 
   void _showHistory() {
@@ -115,18 +195,27 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => SafeArea(
+      backgroundColor: const Color(0xFF100916),
+      builder: (_) => SafeArea(
         child: SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.72,
           child: replies.isEmpty
-              ? const Center(child: Text('No replies yet.'))
+              ? const Center(
+                  child: Text(
+                    'No replies yet.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
                   itemCount: replies.length,
                   separatorBuilder: (_, __) => const Divider(height: 28),
-                  itemBuilder: (context, index) => SelectableText(
+                  itemBuilder: (_, index) => SelectableText(
                     replies[index].content,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.4),
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: Colors.white,
+                          height: 1.4,
+                        ),
                   ),
                 ),
         ),
@@ -134,18 +223,10 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     );
   }
 
-  void _submit() {
-    final text = _controller.text.trim();
-    if (text.isEmpty || widget.busy) return;
-    _controller.clear();
-    _textFocus.unfocus();
-    setState(() => _textMode = false);
-    widget.onSend(text);
-  }
-
   @override
   void dispose() {
     _captionRun++;
+    _textFocus.unfocus();
     _textFocus.dispose();
     _controller.dispose();
     super.dispose();
@@ -153,29 +234,26 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final accent = scheme.primary;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final background = dark ? Colors.black : Colors.white;
+    final accent = Theme.of(context).colorScheme.primary;
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.35);
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: background,
+      backgroundColor: Colors.black,
       body: SafeArea(
         child: LayoutBuilder(
-          builder: (context, constraints) {
+          builder: (_, constraints) {
             final orbSize = math.min(
-              constraints.maxWidth * 0.82,
-              constraints.maxHeight * 0.54,
-            );
-            final resolvedOrbSize = orbSize.clamp(180.0, 520.0).toDouble();
+              constraints.maxWidth * 0.84,
+              constraints.maxHeight * 0.55,
+            ).clamp(180.0, 520.0).toDouble();
 
             return Stack(
               children: [
                 Positioned(
                   top: 16,
                   left: 16,
-                  child: _OutlineIconButton(
+                  child: _RoundButton(
                     icon: widget.listening
                         ? Icons.stop_rounded
                         : widget.microphone.available
@@ -183,7 +261,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                             : Icons.mic_none,
                     color: accent,
                     tooltip: widget.microphone.permissionGranted
-                        ? 'Use microphone'
+                        ? 'Talk to MOM'
                         : 'Enable microphone',
                     onPressed: _handleMicTap,
                   ),
@@ -193,10 +271,10 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                   right: 16,
                   child: GestureDetector(
                     onLongPress: widget.onDiagnostics,
-                    child: _OutlineIconButton(
-                      icon: Icons.settings,
+                    child: _RoundButton(
+                      icon: Icons.settings_outlined,
                       color: accent,
-                      tooltip: 'Settings',
+                      tooltip: 'MOM settings',
                       onPressed: widget.onSettings,
                     ),
                   ),
@@ -207,67 +285,80 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text(
-                          widget.busy
-                              ? 'Thinking...'
-                              : widget.listening
-                                  ? 'Listening...'
-                                  : 'Tap the mic',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: constraints.maxWidth < 500 ? 27 : 34,
-                            fontWeight: FontWeight.w600,
-                            color: accent,
-                            shadows: [
-                              Shadow(
-                                color: accent.withOpacity(0.28),
-                                blurRadius: 14,
+                        Semantics(
+                          liveRegion: true,
+                          label: _modeLabel,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            child: Text(
+                              _modeLabel,
+                              key: ValueKey(_mode),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: _mode == _OrbMode.error
+                                    ? const Color(0xFFE7A6FF)
+                                    : _lavender,
+                                fontSize: (constraints.maxWidth < 500 ? 30 : 36) /
+                                    textScale,
+                                fontWeight: FontWeight.w600,
+                                shadows: [
+                                  Shadow(
+                                    color: accent.withValues(alpha: 0.55),
+                                    blurRadius: 24,
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 24),
-                        _ElectricOrb(
-                          size: resolvedOrbSize,
-                          accent: accent,
-                          lightMode: !dark,
-                          energized: widget.busy || widget.listening,
+                        const SizedBox(height: 22),
+                        Semantics(
+                          image: true,
+                          label: _orbSemantics,
+                          child: ExcludeSemantics(
+                            child: _PlasmaOrb(
+                              size: orbSize,
+                              accent: accent,
+                              mode: _mode,
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 18),
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 180),
                           child: _caption.isEmpty
                               ? const SizedBox(height: 64)
-                              : ConstrainedBox(
+                              : InkWell(
                                   key: ValueKey(_captionWindow),
-                                  constraints: BoxConstraints(
-                                    maxWidth: math.min(
-                                      720,
-                                      constraints.maxWidth * 0.88,
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: _showHistory,
+                                  child: ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxWidth: math.min(
+                                        720,
+                                        constraints.maxWidth * 0.88,
+                                      ),
                                     ),
-                                  ),
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(12),
-                                    onTap: _showHistory,
                                     child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      padding: const EdgeInsets.all(6),
                                       child: Text(
                                         _captionWindow,
                                         maxLines: 5,
                                         overflow: TextOverflow.ellipsis,
                                         textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: accent,
-                                      fontSize:
-                                          constraints.maxWidth < 500 ? 18 : 21,
-                                      height: 1.28,
-                                      fontWeight: FontWeight.w600,
-                                      shadows: [
-                                        Shadow(
-                                          color: accent.withOpacity(0.24),
-                                          blurRadius: 10,
-                                        ),
-                                      ],
+                                        style: TextStyle(
+                                          color: _lavender,
+                                          fontSize:
+                                              (constraints.maxWidth < 500 ? 18 : 21) /
+                                                  textScale,
+                                          height: 1.28,
+                                          fontWeight: FontWeight.w600,
+                                          shadows: [
+                                            Shadow(
+                                              color: accent.withValues(alpha: 0.36),
+                                              blurRadius: 12,
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -279,29 +370,23 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                   ),
                 ),
                 Positioned(
-                  bottom: 28,
-                  left: 24,
-                  child: Text(
-                    'MOM 0.5.0',
-                    style: TextStyle(
-                      color: accent,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  bottom: 16,
+                  left: 16,
+                  child: TextButton.icon(
+                    onPressed: _openPersonality,
+                    icon: const Icon(Icons.auto_awesome_outlined),
+                    label: const Text('MOM style'),
+                    style: TextButton.styleFrom(foregroundColor: accent),
                   ),
                 ),
                 Positioned(
                   bottom: 16,
                   right: 16,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: accent, width: 2),
-                    ),
-                    child: IconButton(
-                      tooltip: 'Text MOM',
-                      icon: Icon(Icons.keyboard, color: accent),
-                      onPressed: _toggleTextMode,
-                    ),
+                  child: _RoundButton(
+                    icon: Icons.keyboard_alt_outlined,
+                    color: accent,
+                    tooltip: 'Type to MOM',
+                    onPressed: _toggleTextMode,
                   ),
                 ),
                 if (_textMode)
@@ -310,9 +395,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                     right: 16,
                     bottom: 78,
                     child: Material(
-                      color: dark
-                          ? const Color(0xF0141019)
-                          : const Color(0xF7FFFFFF),
+                      color: const Color(0xF0141019),
                       elevation: 12,
                       borderRadius: BorderRadius.circular(18),
                       child: Container(
@@ -320,7 +403,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: accent.withOpacity(0.72),
+                            color: accent.withValues(alpha: 0.72),
                             width: 1.4,
                           ),
                         ),
@@ -335,14 +418,18 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                                 minLines: 1,
                                 maxLines: 4,
                                 textInputAction: TextInputAction.send,
+                                style: const TextStyle(color: Colors.white),
+                                cursorColor: _purple,
                                 decoration: const InputDecoration(
-                                  hintText: 'Text MOM…',
+                                  hintText: 'Type to MOM…',
+                                  hintStyle: TextStyle(color: Colors.white54),
                                   border: InputBorder.none,
                                 ),
                                 onSubmitted: (_) => _submit(),
                               ),
                             ),
                             IconButton(
+                              tooltip: 'Send',
                               onPressed: widget.busy ? null : _submit,
                               icon: widget.busy
                                   ? const SizedBox(
@@ -350,6 +437,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                                       height: 18,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
+                                        color: _purple,
                                       ),
                                     )
                                   : Icon(Icons.arrow_upward, color: accent),
@@ -368,74 +456,94 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
   }
 }
 
-class _OutlineIconButton extends StatelessWidget {
-  const _OutlineIconButton({
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
     required this.icon,
     required this.color,
-    required this.onPressed,
     required this.tooltip,
+    required this.onPressed,
   });
 
   final IconData icon;
   final Color color;
-  final VoidCallback onPressed;
   final String tooltip;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: color, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.12),
-            blurRadius: 10,
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: ExcludeSemantics(
+        child: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.black.withValues(alpha: 0.48),
+            border: Border.all(color: color, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.22),
+                blurRadius: 14,
+              ),
+            ],
           ),
-        ],
-      ),
-      child: IconButton(
-        tooltip: tooltip,
-        icon: Icon(icon, color: color),
-        onPressed: onPressed,
+          child: IconButton(
+            tooltip: tooltip,
+            icon: Icon(icon, color: color),
+            onPressed: onPressed,
+          ),
+        ),
       ),
     );
   }
 }
 
-class _ElectricOrb extends StatefulWidget {
-  const _ElectricOrb({
+class _PlasmaOrb extends StatefulWidget {
+  const _PlasmaOrb({
     required this.size,
     required this.accent,
-    required this.lightMode,
-    required this.energized,
+    required this.mode,
   });
 
   final double size;
   final Color accent;
-  final bool lightMode;
-  final bool energized;
+  final _OrbMode mode;
 
   @override
-  State<_ElectricOrb> createState() => _ElectricOrbState();
+  State<_PlasmaOrb> createState() => _PlasmaOrbState();
 }
 
-class _ElectricOrbState extends State<_ElectricOrb>
+class _PlasmaOrbState extends State<_PlasmaOrb>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _rotation;
+  late final AnimationController _motion;
+  bool? _reducedMotion;
 
   @override
   void initState() {
     super.initState();
-    _rotation = AnimationController(
+    _motion = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 5200),
+      duration: const Duration(milliseconds: 6200),
     )..repeat();
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (_reducedMotion == reduced) return;
+    _reducedMotion = reduced;
+    if (reduced) {
+      _motion.stop();
+      _motion.value = 0.24;
+    } else if (!_motion.isAnimating) {
+      _motion.repeat();
+    }
+  }
+
+  @override
   void dispose() {
-    _rotation.dispose();
+    _motion.dispose();
     super.dispose();
   }
 
@@ -443,30 +551,40 @@ class _ElectricOrbState extends State<_ElectricOrb>
   Widget build(BuildContext context) {
     return SizedBox(
       width: widget.size,
-      height: widget.size + 34,
+      height: widget.size + 40,
       child: Stack(
         alignment: Alignment.topCenter,
         clipBehavior: Clip.none,
         children: [
           Positioned(
-            top: widget.size - 8,
+            top: widget.size - 5,
             child: AnimatedBuilder(
-              animation: _rotation,
-              builder: (context, _) {
-                final pulse = 0.5 +
-                    0.5 * math.sin(_rotation.value * math.pi * 4);
+              animation: _motion,
+              builder: (_, __) {
+                final pulse = 0.5 + 0.5 * math.sin(_motion.value * math.pi * 4);
+                final intensity = switch (widget.mode) {
+                  _OrbMode.listening => 1.0,
+                  _OrbMode.thinking => 0.88,
+                  _OrbMode.speaking => 1.0,
+                  _OrbMode.interrupted => 0.94,
+                  _OrbMode.confused => 0.82,
+                  _OrbMode.error => 0.42,
+                  _OrbMode.idle => 0.58,
+                };
                 return Container(
-                  width: widget.size * (0.52 + 0.08 * pulse),
-                  height: 24,
+                  width: widget.size * (0.58 + 0.08 * pulse),
+                  height: 34,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
                     gradient: RadialGradient(
                       colors: [
-                        widget.accent.withOpacity(
-                          widget.lightMode ? 0.15 + 0.08 * pulse : 0.25 + 0.12 * pulse,
+                        widget.accent.withValues(
+                          alpha: (0.36 + 0.12 * pulse) * intensity,
                         ),
-                        widget.accent.withOpacity(0),
+                        widget.accent.withValues(alpha: 0.08 * intensity),
+                        Colors.transparent,
                       ],
+                      stops: const [0, 0.46, 1],
                     ),
                   ),
                 );
@@ -476,13 +594,12 @@ class _ElectricOrbState extends State<_ElectricOrb>
           SizedBox.square(
             dimension: widget.size,
             child: AnimatedBuilder(
-              animation: _rotation,
-              builder: (context, _) => CustomPaint(
-                painter: _ElectricOrbPainter(
+              animation: _motion,
+              builder: (_, __) => CustomPaint(
+                painter: _PlasmaOrbPainter(
                   accent: widget.accent,
-                  lightMode: widget.lightMode,
-                  phase: _rotation.value,
-                  energized: widget.energized,
+                  phase: _motion.value,
+                  mode: widget.mode,
                 ),
               ),
             ),
@@ -493,125 +610,126 @@ class _ElectricOrbState extends State<_ElectricOrb>
   }
 }
 
-class _ElectricOrbPainter extends CustomPainter {
-  const _ElectricOrbPainter({
+class _PlasmaOrbPainter extends CustomPainter {
+  const _PlasmaOrbPainter({
     required this.accent,
-    required this.lightMode,
     required this.phase,
-    required this.energized,
+    required this.mode,
   });
 
   final Color accent;
-  final bool lightMode;
   final double phase;
-  final bool energized;
+  final _OrbMode mode;
+
+  double get _energy => switch (mode) {
+        _OrbMode.listening => 1.08,
+        _OrbMode.thinking => 0.98,
+        _OrbMode.speaking => 1.12,
+        _OrbMode.interrupted => 1.0,
+        _OrbMode.confused => 0.88,
+        _OrbMode.error => 0.43,
+        _OrbMode.idle => 0.68,
+      };
+
+  int get _filamentCount => switch (mode) {
+        _OrbMode.listening => 40,
+        _OrbMode.thinking => 34,
+        _OrbMode.speaking => 44,
+        _OrbMode.interrupted => 26,
+        _OrbMode.confused => 22,
+        _OrbMode.error => 12,
+        _OrbMode.idle => 25,
+      };
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width, size.height) / 2 - 10;
+    final radius = math.min(size.width, size.height) / 2 - 11;
     final spin = phase * math.pi * 2;
-    final pulse = 0.5 + 0.5 * math.sin(spin * 2.3);
-    final heat = energized ? 1.0 : 0.72;
+    final pulse = 0.5 + 0.5 * math.sin(spin * 2.15);
+    final energy = _energy;
 
-    final outerGlow = Paint()
-      ..color = accent.withOpacity(
-        (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
-      )
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.18);
-    canvas.drawCircle(center, radius * (0.98 + 0.025 * pulse), outerGlow);
+    canvas.drawCircle(
+      center,
+      radius * (1.01 + 0.018 * pulse),
+      Paint()
+        ..color = accent.withValues(
+          alpha: math.min(1.0, (0.29 + 0.09 * pulse) * energy),
+        )
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.17),
+    );
 
-    final body = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(-0.18, -0.22),
-        radius: 1.05,
-        colors: [
-          Colors.white.withOpacity(lightMode ? 0.97 : 0.93),
-          const Color(0xFFE9C5FF).withOpacity(0.98),
-          accent.withOpacity(0.94),
-          const Color(0xFF5B0FA3),
-          const Color(0xFF140020),
-        ],
-        stops: const [0.0, 0.07, 0.28, 0.66, 1.0],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, body);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..shader = const RadialGradient(
+          center: Alignment(0.08, 0.06),
+          radius: 1.03,
+          colors: [
+            Color(0xFF2A0047),
+            Color(0xFF18002D),
+            Color(0xFF0C0016),
+            Color(0xFF020004),
+          ],
+          stops: [0, 0.40, 0.78, 1],
+        ).createShader(Rect.fromCircle(center: center, radius: radius)),
+    );
 
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius)));
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius)),
+    );
 
-    final deepGlow = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          accent.withOpacity(0.14 + 0.08 * pulse),
-          const Color(0x00140020),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: radius * 0.88));
-    canvas.drawCircle(center, radius * 0.9, deepGlow);
-
-    final ringPaintBack = Paint()
+    final glow = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(0.8, radius * 0.005)
-      ..color = accent.withOpacity(lightMode ? 0.20 : 0.28);
-    final ringPaintFront = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF5E6FF).withOpacity(0.32 + 0.12 * pulse)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = math.max(3.2, radius * 0.025)
+      ..color = const Color(0xFF9B31FF).withValues(
+        alpha: math.min(1.0, 0.30 * energy),
+      )
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025);
 
-    for (var r = 0; r < 4; r++) {
-      final tilt = -0.62 + r * 0.38;
-      final rect = Rect.fromCenter(
-        center: center,
-        width: radius * 1.76,
-        height: radius * (0.36 + r * 0.11),
+    final line = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = math.max(0.9, radius * 0.0065)
+      ..color = const Color(0xFFDFA6FF).withValues(
+        alpha: math.min(1.0, 0.92 * energy),
       );
-      canvas.save();
-      canvas.translate(center.dx, center.dy);
-      canvas.rotate(tilt + spin * (r.isEven ? 0.055 : -0.045));
-      canvas.translate(-center.dx, -center.dy);
-      canvas.drawArc(rect, math.pi, math.pi, false, ringPaintBack);
-      canvas.drawArc(rect, 0, math.pi, false, ringPaintFront);
-      canvas.restore();
-    }
 
-    final faint = Paint()
+    final branch = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(0.55, radius * 0.004)
-      ..color = accent.withOpacity(0.48 * heat);
+      ..color = const Color(0xFFA83FFF).withValues(
+        alpha: math.min(1.0, 0.66 * energy),
+      );
 
-    final hot = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF8EEFF).withOpacity(0.88 * heat)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
-
-    final filamentCount = energized ? 34 : 26;
-    for (var i = 0; i < filamentCount; i++) {
+    for (var i = 0; i < _filamentCount; i++) {
       final seed = i * 12.9898;
-      final rotationRate = i.isEven ? 1.0 : -0.72;
-      final base = spin * rotationRate +
-          math.pi * 2 * i / filamentCount +
-          0.18 * math.sin(seed);
+      var base = math.pi * 2 * i / _filamentCount;
+      base += spin * (i.isEven ? 0.20 : -0.13);
+
+      if (mode == _OrbMode.confused) {
+        base += 0.16 * math.sin(spin * 7 + seed);
+      } else if (mode == _OrbMode.interrupted) {
+        base += 0.10 * math.sin(spin * 10 + seed);
+      }
+
       final path = Path();
       Offset? previous;
-
-      for (var step = 0; step <= 11; step++) {
-        final t = step / 11;
-        final radial = radius * (0.06 + 0.91 * t);
-        final curl =
-            0.72 * math.sin(t * math.pi) * math.sin(seed * 0.7 + spin * 1.6);
-        final jitter =
-            0.075 * math.sin(seed + step * 4.73 + spin * (2.0 + (i % 3)));
-        final angle = base + curl + jitter;
-        final depth = math.sin(base + t * 1.4 + spin * 0.22);
-        final squash = 0.72 + 0.18 * depth;
+      for (var step = 0; step <= 10; step++) {
+        final t = step / 10;
+        final radial = radius * (0.025 + 0.94 * t);
+        final curl = 0.20 * math.sin(seed + t * 4.2 + spin * 1.3);
+        final zig = 0.060 * math.sin(seed * 0.7 + step * 5.7 + spin * 3.2);
+        final angle = base + curl * (1 - t * 0.32) + zig;
         final point = Offset(
           center.dx + math.cos(angle) * radial,
-          center.dy + math.sin(angle) * radial * squash,
+          center.dy + math.sin(angle) * radial,
         );
 
         if (step == 0) {
@@ -620,75 +738,109 @@ class _ElectricOrbPainter extends CustomPainter {
           path.lineTo(point.dx, point.dy);
         }
 
-        if (previous != null && (step == 6 || step == 8) && i % 3 == 0) {
-          final branchAngle = angle + (i.isEven ? 0.34 : -0.34);
-          final branchLength = radius * (step == 6 ? 0.18 : 0.12);
+        if (previous != null && step >= 5 && step <= 8 && i % 3 == 0) {
+          final direction = i.isEven ? 1.0 : -1.0;
+          final branchAngle = angle + direction * (0.28 + 0.05 * math.sin(seed));
+          final branchLength = radius * (0.12 + (8 - step) * 0.025);
           final end = Offset(
             point.dx + math.cos(branchAngle) * branchLength,
-            point.dy + math.sin(branchAngle) * branchLength * 0.72,
+            point.dy + math.sin(branchAngle) * branchLength,
           );
-          final branch = Path()
-            ..moveTo(previous.dx, previous.dy)
-            ..quadraticBezierTo(point.dx, point.dy, end.dx, end.dy);
-          canvas.drawPath(branch, faint);
+          canvas.drawPath(
+            Path()
+              ..moveTo(previous.dx, previous.dy)
+              ..quadraticBezierTo(point.dx, point.dy, end.dx, end.dy),
+            branch,
+          );
         }
         previous = point;
       }
 
-      final facing = 0.5 + 0.5 * math.cos(base + spin * 0.12);
-      if (i % 4 == 0 || facing > 0.78) {
-        canvas.drawPath(path, hot);
-      } else {
-        canvas.drawPath(path, faint);
-      }
+      canvas.drawPath(path, glow);
+      canvas.drawPath(path, line);
     }
 
-    final core = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          Colors.white.withOpacity(0.98),
-          const Color(0xFFF3DEFF).withOpacity(0.92),
-          accent.withOpacity(0.55),
-          accent.withOpacity(0),
-        ],
-        stops: const [0.0, 0.22, 0.52, 1.0],
-      ).createShader(
-        Rect.fromCircle(
-          center: center,
-          radius: radius * (0.22 + 0.035 * pulse),
+    final coreRadius = radius * switch (mode) {
+      _OrbMode.listening => 0.080 + 0.018 * pulse,
+      _OrbMode.thinking => 0.090 + 0.026 * pulse,
+      _OrbMode.speaking => 0.110 + 0.035 * pulse,
+      _OrbMode.interrupted => 0.075 + 0.012 * pulse,
+      _OrbMode.confused => 0.066 + 0.020 * pulse,
+      _OrbMode.error => 0.055,
+      _OrbMode.idle => 0.070 + 0.010 * pulse,
+    };
+
+    canvas.drawCircle(
+      center,
+      coreRadius * 2.6,
+      Paint()
+        ..color = accent.withValues(
+          alpha: math.min(1.0, 0.44 * energy),
+        )
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.09),
+    );
+    canvas.drawCircle(
+      center,
+      coreRadius,
+      Paint()
+        ..shader = const RadialGradient(
+          colors: [
+            Colors.white,
+            Color(0xFFF6E8FF),
+            Color(0xFFC968FF),
+            Color(0x00A855F7),
+          ],
+          stops: [0, 0.28, 0.68, 1],
+        ).createShader(
+          Rect.fromCircle(center: center, radius: coreRadius * 1.25),
         ),
-      );
-    canvas.drawCircle(center, radius * (0.22 + 0.035 * pulse), core);
+    );
 
     canvas.restore();
 
-    final rimGlow = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(4.0, radius * 0.035)
-      ..color = accent.withOpacity((lightMode ? 0.12 : 0.20) * heat)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05);
-    canvas.drawCircle(center, radius, rimGlow);
+    if (mode == _OrbMode.confused || mode == _OrbMode.interrupted) {
+      final arc = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.2, radius * 0.008)
+        ..strokeCap = StrokeCap.round
+        ..color = const Color(0xFFEAC8FF).withValues(alpha: 0.62);
+      final gap = mode == _OrbMode.confused ? 0.62 : 0.38;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius * 0.88),
+        spin,
+        math.pi * 2 - gap,
+        false,
+        arc,
+      );
+    }
 
-    final edge = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = math.max(1.2, radius * 0.009)
-      ..shader = SweepGradient(
-        transform: GradientRotation(spin),
-        colors: [
-          accent.withOpacity(0.35),
-          const Color(0xFFF4E4FF).withOpacity(0.95),
-          accent.withOpacity(0.45),
-          const Color(0xFF7D26C9).withOpacity(0.75),
-          accent.withOpacity(0.35),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, edge);
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.6, radius * 0.010)
+        ..color = accent.withValues(
+          alpha: math.min(1.0, 0.78 * energy),
+        ),
+    );
+
+    canvas.drawCircle(
+      center,
+      radius * 1.015,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(4.0, radius * 0.025)
+        ..color = accent.withValues(
+          alpha: math.min(1.0, 0.18 * energy),
+        )
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _ElectricOrbPainter oldDelegate) =>
+  bool shouldRepaint(covariant _PlasmaOrbPainter oldDelegate) =>
       oldDelegate.phase != phase ||
       oldDelegate.accent != accent ||
-      oldDelegate.lightMode != lightMode ||
-      oldDelegate.energized != energized;
+      oldDelegate.mode != mode;
 }

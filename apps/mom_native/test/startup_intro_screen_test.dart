@@ -77,6 +77,8 @@ void main() {
     expect(find.text('Meet MOM'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'Christian');
+    await tester.ensureVisible(find.text('Meet MOM'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Meet MOM'));
     await tester.pump();
 
