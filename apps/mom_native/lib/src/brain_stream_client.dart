@@ -5,19 +5,8 @@ import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import 'brain_stream_parser.dart';
 import 'sync_client.dart';
-
-class BrainStreamChunk {
-  const BrainStreamChunk({
-    required this.delta,
-    required this.model,
-    required this.done,
-  });
-
-  final String delta;
-  final String model;
-  final bool done;
-}
 
 class MomBrainStreamClient {
   MomBrainStreamClient({
@@ -96,44 +85,19 @@ class MomBrainStreamClient {
       );
     }
 
-    var resolvedModel = response.headers['x-mom-model']?.trim() ?? '';
+    final parser = BrainSseParser(
+      initialModel: response.headers['x-mom-model']?.trim() ?? '',
+    );
     await for (final line in response.stream
         .transform(utf8.decoder)
         .transform(const LineSplitter())) {
-      final trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      final data = trimmed.substring(5).trim();
-      if (data.isEmpty) continue;
-      if (data == '[DONE]') {
-        yield BrainStreamChunk(delta: '', model: resolvedModel, done: true);
-        return;
-      }
-
-      dynamic decoded;
-      try {
-        decoded = jsonDecode(data);
-      } catch (_) {
-        continue;
-      }
-      if (decoded is! Map) continue;
-      final responseModel = '${decoded['model'] ?? ''}'.trim();
-      if (responseModel.isNotEmpty) resolvedModel = responseModel;
-      final choices = decoded['choices'];
-      if (choices is! List || choices.isEmpty || choices.first is! Map) continue;
-      final choice = choices.first as Map;
-      final delta = choice['delta'];
-      if (delta is! Map) continue;
-      final content = delta['content'];
-      if (content is String && content.isNotEmpty) {
-        yield BrainStreamChunk(
-          delta: content,
-          model: resolvedModel,
-          done: false,
-        );
-      }
+      final chunk = parser.parseLine(line);
+      if (chunk == null) continue;
+      yield chunk;
+      if (chunk.done) return;
     }
 
-    yield BrainStreamChunk(delta: '', model: resolvedModel, done: true);
+    yield BrainStreamChunk(delta: '', model: parser.model, done: true);
   }
 
   void close() {
