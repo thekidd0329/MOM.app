@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -189,6 +191,7 @@ class StartupIntroStore {
   static const _languageKey = 'mom_startup_language';
   static const _nameKey = 'mom_person_name';
   static const _momStyleKey = 'mom_style';
+  static const _discoveryKey = 'mom_startup_discovery_v1';
 
   Future<bool> isComplete() async {
     final prefs = await SharedPreferences.getInstance();
@@ -209,7 +212,23 @@ class StartupIntroStore {
 
   Future<void> saveMomStyle(String value) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_momStyleKey, MomPersonalityCatalog.normalize(value));
+    final normalized = MomPersonalityCatalog.normalize(value);
+    final personality = MomPersonalityCatalog.byId(normalized);
+    await prefs.setString(_momStyleKey, normalized);
+
+    Map<String, dynamic> discovery = {};
+    final raw = prefs.getString(_discoveryKey);
+    if (raw != null && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          discovery = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
+    }
+    discovery['personality_id'] = personality.id;
+    discovery['personality_prompt'] = personality.runtimePrompt;
+    await prefs.setString(_discoveryKey, jsonEncode(discovery));
   }
 
   Future<bool> allowsStrongLanguage() async {
