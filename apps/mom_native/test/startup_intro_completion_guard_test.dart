@@ -32,9 +32,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('I’m somewhere safe'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Skip intro'));
-    await tester.pumpAndSettle();
 
+    expect(find.text('What’s your name?'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'Chris');
     await tester.tap(find.text('Meet MOM'));
 
