@@ -4,6 +4,7 @@ import 'package:mom_native/src/config.dart';
 import 'package:mom_native/src/mic_status.dart';
 import 'package:mom_native/src/mom_build_info.dart';
 import 'package:mom_native/src/mom_home_screen.dart';
+import 'package:mom_native/src/mom_launch_screen.dart';
 import 'package:mom_native/src/mom_settings_screen.dart';
 import 'package:mom_native/src/sync_client.dart';
 
@@ -36,17 +37,18 @@ void main() {
     expect(find.text('Tap the mic'), findsOneWidget);
   });
 
-  testWidgets('returning-user boot carries the MOM app lockup', (tester) async {
+  testWidgets('returning-user boot carries the MOM app lockup on a phone', (tester) async {
     await tester.binding.setSurfaceSize(const Size(430, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
-      const MaterialApp(home: MomBootScreen(status: 'starting')),
+      const MaterialApp(home: MomLaunchScreen(status: 'starting')),
     );
     await tester.pump(const Duration(milliseconds: 40));
 
     expect(find.text('M'), findsNWidgets(2));
     expect(find.text('app'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('settings exposes the UI-first product controls', (tester) async {
