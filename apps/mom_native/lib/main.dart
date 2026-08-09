@@ -55,6 +55,7 @@ class _MomAppState extends State<MomApp> {
   bool _startupIntroComplete = false;
   bool _busy = false;
   bool _listening = false;
+  bool _voiceConversationActive = false;
   String _status = 'starting';
 
   @override
@@ -211,27 +212,53 @@ class _MomAppState extends State<MomApp> {
     }));
   }
 
+  Future<void> _startListening() async {
+    if (!_voiceConversationActive || _busy || _listening) return;
+    try {
+      await _voice.listen(
+        onState: (value) {
+          if (mounted) setState(() => _listening = value);
+        },
+        onFinal: (text) {
+          if (mounted) setState(() => _listening = false);
+          unawaited(_send(text, inputMode: 'voice'));
+        },
+      );
+    } catch (error) {
+      _voiceConversationActive = false;
+      if (mounted) {
+        setState(() {
+          _listening = false;
+          _status = 'microphone unavailable';
+        });
+      }
+      unawaited(_safeEvent(
+        'microphone_error',
+        payload: {'error_type': error.runtimeType.toString()},
+      ));
+    }
+  }
+
   Future<void> _toggleListening() async {
-    if (_listening) {
+    if (_voiceConversationActive || _listening) {
+      _voiceConversationActive = false;
       await _voice.stopListening();
-      if (mounted) setState(() => _listening = false);
+      if (mounted) {
+        setState(() {
+          _listening = false;
+          if (_status == 'microphone unavailable') _status = 'online';
+        });
+      }
       return;
     }
 
     await _probeMicrophone(true);
     if (!_microphone.permissionGranted) return;
-    await _voice.listen(
-      onState: (value) {
-        if (mounted) setState(() => _listening = value);
-      },
-      onFinal: (text) {
-        if (mounted) setState(() => _listening = false);
-        unawaited(_send(text));
-      },
-    );
+    _voiceConversationActive = true;
+    await _startListening();
   }
 
-  Future<void> _send(String text) async {
+  Future<void> _send(String text, {String inputMode = 'text'}) async {
     final config = _config;
     if (config == null || _busy || text.trim().isEmpty) return;
     final issues = config.validate().where((e) => e.fatal).toList();
@@ -248,7 +275,7 @@ class _MomAppState extends State<MomApp> {
       content: text.trim(),
       createdAt: DateTime.now(),
       metadata: {
-        'input_mode': 'text',
+        'input_mode': inputMode,
         'microphone': _microphone.toJson(),
       },
     );
@@ -261,7 +288,7 @@ class _MomAppState extends State<MomApp> {
     unawaited(_safeSyncTurn(userTurn));
     unawaited(_safeEvent('chat_sent', payload: {
       'characters': text.length,
-      'input_mode': 'text',
+      'input_mode': inputMode,
       'microphone': _microphone.toJson(),
     }));
 
@@ -297,7 +324,9 @@ class _MomAppState extends State<MomApp> {
         });
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
-      unawaited(_voice.speak(reply.text).catchError((_) {}));
+      try {
+        await _voice.speak(reply.text);
+      } catch (_) {}
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
         'model': reply.model,
@@ -325,6 +354,9 @@ class _MomAppState extends State<MomApp> {
           _status = 'offline';
         });
       }
+      try {
+        await _voice.speak(failure.content);
+      } catch (_) {}
       unawaited(_safeEvent(
         'model_error',
         payload: {'error_type': error.runtimeType.toString()},
@@ -332,6 +364,9 @@ class _MomAppState extends State<MomApp> {
     } finally {
       client.close();
       if (mounted) setState(() => _busy = false);
+      if (_voiceConversationActive && mounted) {
+        unawaited(_startListening());
+      }
     }
   }
 
@@ -378,6 +413,7 @@ class _MomAppState extends State<MomApp> {
 
   @override
   void dispose() {
+    _voiceConversationActive = false;
     _sync?.close();
     _llama.stopIfStartedByMom();
     unawaited(_micProbe.dispose());
