@@ -48,6 +48,7 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   final TextEditingController _name = TextEditingController();
   int _stage = 0;
   bool _allowStrongLanguage = true;
+  bool _finishing = false;
 
   void _chooseLanguage(bool value) {
     setState(() {
@@ -69,12 +70,19 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   }
 
   Future<void> _finish() async {
+    if (_finishing) return;
     final name = _name.text.trim();
     if (name.isEmpty) return;
-    await widget.onComplete(
-      allowStrongLanguage: _allowStrongLanguage,
-      name: name,
-    );
+
+    setState(() => _finishing = true);
+    try {
+      await widget.onComplete(
+        allowStrongLanguage: _allowStrongLanguage,
+        name: name,
+      );
+    } finally {
+      if (mounted) setState(() => _finishing = false);
+    }
   }
 
   @override
@@ -102,7 +110,11 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
               0 => _DisclosureStage(onChoose: _chooseLanguage),
               1 => _AttentionStage(onContinue: _enterVideoStage),
               2 => _VideoStage(onSkip: _finishVideo),
-              _ => _NameStage(controller: _name, onContinue: _finish),
+              _ => _NameStage(
+                  controller: _name,
+                  onContinue: _finish,
+                  finishing: _finishing,
+                ),
             },
           ),
         ),
@@ -198,10 +210,12 @@ class _NameStage extends StatelessWidget {
   const _NameStage({
     required this.controller,
     required this.onContinue,
+    required this.finishing,
   });
 
   final TextEditingController controller;
   final Future<void> Function() onContinue;
+  final bool finishing;
 
   @override
   Widget build(BuildContext context) {
@@ -213,10 +227,11 @@ class _NameStage extends StatelessWidget {
       children: [
         TextField(
           controller: controller,
+          enabled: !finishing,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
           textInputAction: TextInputAction.done,
-          onSubmitted: (_) => onContinue(),
+          onSubmitted: finishing ? null : (_) => onContinue(),
           decoration: const InputDecoration(
             hintText: 'Your name',
             border: OutlineInputBorder(),
@@ -224,8 +239,14 @@ class _NameStage extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed: onContinue,
-          child: const Text('Meet MOM'),
+          onPressed: finishing ? null : onContinue,
+          child: finishing
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Meet MOM'),
         ),
       ],
     );
