@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,10 +9,217 @@ import 'local_store.dart';
 import 'mic_status.dart';
 import 'sync_client.dart';
 
+enum ModelFailureKind {
+  identity,
+  network,
+  timeout,
+  providerBusy,
+  provider,
+  service,
+  modelDiscovery,
+  response,
+  configuration,
+  unknown,
+}
+
+class ModelFailure {
+  const ModelFailure({
+    required this.kind,
+    required this.code,
+    required this.stage,
+    required this.retryable,
+    this.statusCode,
+    this.providerStatus,
+  });
+
+  final ModelFailureKind kind;
+  final String code;
+  final String stage;
+  final bool retryable;
+  final int? statusCode;
+  final int? providerStatus;
+
+  String get userMessage => switch (kind) {
+        ModelFailureKind.identity =>
+          'I lost the cloud identity for this device. I tried reconnecting, but it still is not accepting me.',
+        ModelFailureKind.network =>
+          'I cannot reach my brain service from this device right now. Check the connection and try again.',
+        ModelFailureKind.timeout =>
+          'My brain took too long to answer. The request timed out instead of disappearing silently.',
+        ModelFailureKind.providerBusy =>
+          'My model provider is overloaded right now. Give it a moment and try again.',
+        ModelFailureKind.provider =>
+          'My brain service is reachable, but the model provider is not answering correctly.',
+        ModelFailureKind.service =>
+          'My cloud brain service is having a server problem right now.',
+        ModelFailureKind.modelDiscovery =>
+          'My brain service is online, but it cannot resolve a model to answer with.',
+        ModelFailureKind.response =>
+          'My brain answered, but the response was malformed and I refused to pretend it was usable.',
+        ModelFailureKind.configuration =>
+          'My brain service is missing required model configuration.',
+        ModelFailureKind.unknown =>
+          'Something failed in my brain path, and diagnostics has the stage instead of hiding it.',
+      };
+
+  String get diagnosticSummary {
+    final parts = <String>['stage=$stage', 'code=$code'];
+    if (statusCode != null) parts.add('http=$statusCode');
+    if (providerStatus != null) parts.add('provider_http=$providerStatus');
+    parts.add('retryable=$retryable');
+    return parts.join(' · ');
+  }
+}
+
+ModelFailure classifyModelFailure(Object error) {
+  if (error is MomCloudException) {
+    if (error.code == 'installation_not_registered' ||
+        error.code == 'invalid_installation_token') {
+      return ModelFailure(
+        kind: ModelFailureKind.identity,
+        code: error.code,
+        stage: 'installation_identity',
+        retryable: true,
+        statusCode: error.statusCode,
+      );
+    }
+    if (error.code == 'request_timeout') {
+      return ModelFailure(
+        kind: ModelFailureKind.timeout,
+        code: error.code,
+        stage: error.service,
+        retryable: true,
+      );
+    }
+    if (error.code == 'network_unreachable' ||
+        error.code == 'network_request_failed') {
+      return ModelFailure(
+        kind: ModelFailureKind.network,
+        code: error.code,
+        stage: error.service,
+        retryable: true,
+      );
+    }
+    if (error.code == 'hf_secret_missing') {
+      return ModelFailure(
+        kind: ModelFailureKind.configuration,
+        code: error.code,
+        stage: 'provider_configuration',
+        retryable: false,
+        statusCode: error.statusCode,
+      );
+    }
+    if (error.code == 'provider_error') {
+      return ModelFailure(
+        kind: error.providerStatus == 429
+            ? ModelFailureKind.providerBusy
+            : ModelFailureKind.provider,
+        code: error.code,
+        stage: 'model_provider',
+        retryable: true,
+        statusCode: error.statusCode,
+        providerStatus: error.providerStatus,
+      );
+    }
+    if (error.code == 'unexpected_provider_response' ||
+        error.code == 'unexpected_brain_response' ||
+        error.code == 'invalid_server_response') {
+      return ModelFailure(
+        kind: ModelFailureKind.response,
+        code: error.code,
+        stage: error.code == 'invalid_server_response'
+            ? error.service
+            : 'model_provider_response',
+        retryable: true,
+        statusCode: error.statusCode,
+        providerStatus: error.providerStatus,
+      );
+    }
+    if (error.code.startsWith('model_discovery_') ||
+        error.code == 'no_models_available') {
+      return ModelFailure(
+        kind: ModelFailureKind.modelDiscovery,
+        code: error.code,
+        stage: 'model_discovery',
+        retryable: error.retryable,
+        statusCode: error.statusCode,
+        providerStatus: error.providerStatus,
+      );
+    }
+    return ModelFailure(
+      kind: ModelFailureKind.service,
+      code: error.code,
+      stage: error.service,
+      retryable: error.retryable,
+      statusCode: error.statusCode,
+      providerStatus: error.providerStatus,
+    );
+  }
+
+  if (error is TimeoutException) {
+    return const ModelFailure(
+      kind: ModelFailureKind.timeout,
+      code: 'local_model_timeout',
+      stage: 'local_model',
+      retryable: true,
+    );
+  }
+  if (error is SocketException || error is http.ClientException) {
+    return const ModelFailure(
+      kind: ModelFailureKind.network,
+      code: 'local_model_network',
+      stage: 'local_model',
+      retryable: true,
+    );
+  }
+  if (error is StateError) {
+    return const ModelFailure(
+      kind: ModelFailureKind.modelDiscovery,
+      code: 'no_models_available',
+      stage: 'model_discovery',
+      retryable: true,
+    );
+  }
+  if (error is FormatException) {
+    return const ModelFailure(
+      kind: ModelFailureKind.response,
+      code: 'malformed_model_response',
+      stage: 'model_provider_response',
+      retryable: true,
+    );
+  }
+  if (error is HttpException) {
+    return const ModelFailure(
+      kind: ModelFailureKind.provider,
+      code: 'local_model_http_error',
+      stage: 'local_model_provider',
+      retryable: true,
+    );
+  }
+  return ModelFailure(
+    kind: ModelFailureKind.unknown,
+    code: error.runtimeType.toString(),
+    stage: 'unknown',
+    retryable: true,
+  );
+}
+
 class ModelReply {
   const ModelReply({required this.text, required this.model});
   final String text;
   final String model;
+}
+
+class ModelProbeResult {
+  const ModelProbeResult({
+    required this.model,
+    required this.latencyMs,
+    required this.route,
+  });
+
+  final String model;
+  final int latencyMs;
+  final String route;
 }
 
 class ModelClient {
@@ -86,6 +294,31 @@ class ModelClient {
     } catch (_) {
       return false;
     }
+  }
+
+  Future<ModelProbeResult> probe() async {
+    if (!_useDirectLocalModel) {
+      final result = await _sync.brainProbe(model: config.modelName.trim());
+      return ModelProbeResult(
+        model: result.model,
+        latencyMs: result.latencyMs,
+        route: 'supabase→provider→response',
+      );
+    }
+
+    final timer = Stopwatch()..start();
+    final reply = await _directChat(
+      systemPrompt:
+          'This is a transport health probe. Reply with one very short acknowledgement.',
+      history: const [],
+      userText: 'Confirm that the local response path is working.',
+    );
+    timer.stop();
+    return ModelProbeResult(
+      model: reply.model,
+      latencyMs: timer.elapsedMilliseconds,
+      route: 'local→provider→response',
+    );
   }
 
   Future<ModelReply> _directChat({
