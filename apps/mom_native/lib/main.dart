@@ -18,6 +18,7 @@ import 'src/startup_discovery/discovery_screen.dart';
 import 'src/startup_discovery/discovery_store.dart';
 import 'src/startup_intro_screen.dart';
 import 'src/sync_client.dart';
+import 'src/voice_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +40,7 @@ class _MomAppState extends State<MomApp> {
   final DiscoveryProgressStore _discoveryStore = DiscoveryProgressStore();
   final MomMicrophoneProbe _micProbe = MomMicrophoneProbe();
   final StartupIntroStore _startupIntroStore = StartupIntroStore();
+  final MomVoiceService _voice = MomVoiceService();
 
   MomConfig? _config;
   MomSyncClient? _sync;
@@ -52,6 +54,7 @@ class _MomAppState extends State<MomApp> {
   bool _booting = true;
   bool _startupIntroComplete = false;
   bool _busy = false;
+  bool _listening = false;
   String _status = 'starting';
 
   @override
@@ -92,6 +95,7 @@ class _MomAppState extends State<MomApp> {
           .where((turn) => turn.role == 'assistant')
           .toList(growable: false);
       _microphone = await _micProbe.probe();
+      await _voice.initialize();
 
       if (Platform.isLinux && config.useLocalLlama) {
         setState(() => _status = 'starting local brain');
@@ -195,6 +199,26 @@ class _MomAppState extends State<MomApp> {
     }));
   }
 
+  Future<void> _toggleListening() async {
+    if (_listening) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+
+    await _probeMicrophone(true);
+    if (!_microphone.permissionGranted) return;
+    await _voice.listen(
+      onState: (value) {
+        if (mounted) setState(() => _listening = value);
+      },
+      onFinal: (text) {
+        if (mounted) setState(() => _listening = false);
+        unawaited(_send(text));
+      },
+    );
+  }
+
   Future<void> _send(String text) async {
     final config = _config;
     if (config == null || _busy || text.trim().isEmpty) return;
@@ -261,6 +285,7 @@ class _MomAppState extends State<MomApp> {
         });
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
+      unawaited(_voice.speak(reply.text).catchError((_) {}));
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
         'model': reply.model,
@@ -344,6 +369,7 @@ class _MomAppState extends State<MomApp> {
     _sync?.close();
     _llama.stopIfStartedByMom();
     unawaited(_micProbe.dispose());
+    unawaited(_voice.dispose());
     super.dispose();
   }
 
@@ -381,12 +407,14 @@ class _MomAppState extends State<MomApp> {
       home = MomHomeScreen(
         turns: _captionTurns,
         busy: _busy,
+        listening: _listening,
         status: _status,
         microphone: _microphone,
         onSend: _send,
         onSettings: _openSettings,
         onDiagnostics: _openDiagnostics,
         onProbeMicrophone: _probeMicrophone,
+        onMicTap: _toggleListening,
       );
     }
 
