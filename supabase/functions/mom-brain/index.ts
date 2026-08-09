@@ -7,7 +7,12 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SUPABASE_DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
 const HF_ENV_TOKEN = Deno.env.get("HF_TOKEN") ?? Deno.env.get("HUGGINGFACE_API_KEY") ?? "";
 const HF_API_BASE = (Deno.env.get("HF_API_BASE") ?? "https://router.huggingface.co/v1").replace(/\/$/, "");
-const MOM_MODEL = "failspy/Smaug-Llama-3-70B-Instruct-abliterated-v3";
+const CONFIGURED_MODEL = (Deno.env.get("MOM_MODEL") ?? "").trim();
+const PREFERRED_MODELS = [
+  "failspy/Smaug-Llama-3-70B-Instruct-abliterated-v3",
+  "abacusai/Smaug-Llama-3-70B-Instruct",
+  "failspy/Llama-3-70B-Instruct-abliterated-v3",
+];
 const AWARENESS_URL = `${SUPABASE_URL}/functions/v1/mom-awareness`;
 const pool = new Pool(SUPABASE_DB_URL, 1);
 const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -53,6 +58,10 @@ function safeText(value: unknown, max: number, fallback = "") {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isForbiddenModel(model: string) {
+  return model.toLowerCase().includes("deepseek");
 }
 
 async function sha256(value: string) {
@@ -144,6 +153,37 @@ async function hf(path: string, init: RequestInit = {}) {
   let body: unknown = text;
   try { body = text ? JSON.parse(text) : {}; } catch {}
   return { ok: response.ok, status: response.status, body };
+}
+
+async function listProviderModels() {
+  const result = await hf("/models", { method: "GET" });
+  if (!result.ok) throw new Error(`model_discovery_http_${result.status}`);
+  const data = result.body as any;
+  const models = Array.isArray(data?.data)
+    ? data.data
+        .map((item: any) => safeText(item?.id, 300))
+        .filter((model: string) => model && !isForbiddenModel(model))
+    : [];
+  return models;
+}
+
+async function resolveModel() {
+  if (CONFIGURED_MODEL) {
+    if (isForbiddenModel(CONFIGURED_MODEL)) {
+      throw new Error("configured_model_forbidden");
+    }
+    return CONFIGURED_MODEL;
+  }
+
+  const models = await listProviderModels();
+  for (const preferred of PREFERRED_MODELS) {
+    if (models.includes(preferred)) return preferred;
+  }
+  return models.find((model: string) => /smaug/i.test(model))
+    ?? models.find((model: string) => /abliterated/i.test(model))
+    ?? models.find((model: string) => /llama/i.test(model))
+    ?? models[0]
+    ?? (() => { throw new Error("no_allowed_models_available"); })();
 }
 
 function ageHours(value: unknown) {
@@ -282,8 +322,9 @@ Deno.serve(async (req: Request) => {
       version: 10,
       configured,
       provider: "huggingface",
-      model: MOM_MODEL,
+      configured_model: CONFIGURED_MODEL || null,
       client_model_override_accepted: false,
+      forbidden_model_families: ["deepseek"],
       raw_memory_location: "device_only",
       cloud_raw_vector_memory: false,
       structured_profile_context: true,
@@ -344,7 +385,9 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (action === "models") {
-      return json(200, { models: [MOM_MODEL], default_model: MOM_MODEL });
+      const models = await listProviderModels();
+      const defaultModel = await resolveModel();
+      return json(200, { models, default_model: defaultModel });
     }
 
     if (action === "chat") {
@@ -376,11 +419,12 @@ Deno.serve(async (req: Request) => {
       const systemParts = [MOM_CANONICAL_PROMPT];
       if (awareness.text) systemParts.push(awareness.text);
       const system = systemParts.join("\n\n");
+      const model = await resolveModel();
 
       const result = await hf("/chat/completions", {
         method: "POST",
         body: JSON.stringify({
-          model: MOM_MODEL,
+          model,
           messages: [
             { role: "system", content: system },
             ...history,
@@ -401,7 +445,7 @@ Deno.serve(async (req: Request) => {
 
       return json(200, {
         text: content.trim(),
-        model: MOM_MODEL,
+        model,
         memory_hits: 0,
         raw_memory_location: "device_only",
         profile_facts_used: awareness.factCount ?? 0,
