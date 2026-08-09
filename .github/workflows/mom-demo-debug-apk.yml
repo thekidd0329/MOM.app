@@ -102,9 +102,12 @@ jobs:
 
       - name: Verify debug APK payload
         run: |
+          set -euo pipefail
           python3 tools/verify_android_apk.py \
             "$GITHUB_WORKSPACE/mom-demo-debug.apk" \
             "$RUNNER_TEMP/mom_demo_android/android/app/src/main/jniLibs/arm64-v8a"
+          unzip -l "$GITHUB_WORKSPACE/mom-demo-debug.apk" | grep -q 'lib/x86_64/libcrispasr.so'
+          echo "MOM APK contains CrispASR payloads for arm64-v8a and x86_64"
 
       - name: Install and launch MOM in Android emulator
         uses: ReactiveCircus/android-emulator-runner@v2.38.0
@@ -117,6 +120,7 @@ jobs:
           script: |
             set -euo pipefail
             adb install -r "$GITHUB_WORKSPACE/mom-demo-debug.apk"
+            adb shell pm grant app.mom.mom_native android.permission.RECORD_AUDIO || true
             adb shell am force-stop app.mom.mom_native
             adb shell am start -W -n app.mom.mom_native/.MainActivity | tee "$GITHUB_WORKSPACE/mom-demo-start.txt"
             grep -q "Status: ok" "$GITHUB_WORKSPACE/mom-demo-start.txt"
