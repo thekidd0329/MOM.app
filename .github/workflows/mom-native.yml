@@ -136,6 +136,10 @@ jobs:
           cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_android/pubspec.yaml"
           rm -rf "$RUNNER_TEMP/mom_android/assets"
           cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
+          git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$RUNNER_TEMP/crispasr"
+          ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$RUNNER_TEMP/crispasr/build-android.sh" --abi arm64-v8a
+          mkdir -p "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+          cp "$RUNNER_TEMP/crispasr/build-android/arm64-v8a/src/libcrispasr.so" "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a/"
           python3 - <<'PY'
           from pathlib import Path
           p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")
@@ -152,7 +156,7 @@ jobs:
           PY
       - name: Build Android release APK
         working-directory: ${{ runner.temp }}/mom_android
-        run: flutter pub get && flutter build apk --release
+        run: flutter pub get && flutter build apk --release --target-platform android-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: mom-android-apk
