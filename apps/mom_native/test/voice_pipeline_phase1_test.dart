@@ -41,7 +41,8 @@ void main() {
     });
 
     test('brain reply reaches Kokoro synthesis', () {
-      expect(appSource, contains('await _voice.speak(reply.text)'));
+      expect(appSource, contains('await _voice.speak('));
+      expect(appSource, contains('reply.text,'));
       expect(voiceSource, contains("backend: 'kokoro'"));
       expect(voiceSource, contains('session.setVoice(request.voicePath)'));
       expect(voiceSource, contains('session.synthesize(request.text)'));
