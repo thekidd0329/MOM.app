@@ -90,7 +90,6 @@ jobs:
             -H "x-mom-token: $token" \
             -d '{"action":"models"}' \
             "$MOM_BRAIN_URL")"
-          echo "$models"
           model="$(MODELS="$models" python3 - <<'PY'
           import json, os
           data = json.loads(os.environ['MODELS'])
@@ -99,6 +98,7 @@ jobs:
           print(models[0])
           PY
           )"
+          echo "MOM brain model discovery OK: $model"
 
           payload="$(MODEL="$model" python3 - <<'PY'
           import json, os
@@ -126,8 +126,19 @@ jobs:
           chat="$(cat "$chat_file")"
           rm -f "$chat_file"
           echo "MOM brain chat HTTP $chat_status"
-          echo "$chat"
           if [[ "$chat_status" -lt 200 || "$chat_status" -ge 300 ]]; then
+            CHAT="$chat" CHAT_STATUS="$chat_status" python3 - <<'PY'
+          import json, os
+          status = os.environ['CHAT_STATUS']
+          try:
+              data = json.loads(os.environ['CHAT'])
+          except Exception:
+              data = {}
+          error = data.get('error', 'unknown_error')
+          provider = data.get('provider_status')
+          suffix = '' if provider is None else f' provider_http={provider}'
+          print(f'MOM brain completion failed: http={status} error={error}{suffix}')
+          PY
             echo "::error::MOM brain completion failed with HTTP $chat_status"
             exit 1
           fi
