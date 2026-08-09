@@ -8,9 +8,11 @@ class StartupDiscoveryScreen extends StatefulWidget {
   const StartupDiscoveryScreen({
     super.key,
     required this.onComplete,
+    this.onSpeak,
   });
 
   final Future<void> Function(DiscoveryProgress progress) onComplete;
+  final Future<void> Function(String text)? onSpeak;
 
   @override
   State<StartupDiscoveryScreen> createState() => _StartupDiscoveryScreenState();
@@ -25,6 +27,7 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
   bool _loading = true;
   bool _saving = false;
   int _selectedCard = 0;
+  String? _lastSpokenNodeId;
 
   @override
   void initState() {
@@ -41,7 +44,19 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
     });
     if (progress.complete) {
       await widget.onComplete(progress);
+    } else {
+      _speakCurrentNode();
     }
+  }
+
+  void _speakCurrentNode() {
+    final speak = widget.onSpeak;
+    final node = _engine.nextNode(_progress);
+    if (speak == null || node == null || node.id == _lastSpokenNodeId) return;
+    _lastSpokenNodeId = node.id;
+    final prompt = _engine.promptFor(node, _progress);
+    final choices = node.choices.map((choice) => choice.label).join('. ');
+    speak('$prompt. Your choices are: $choices.');
   }
 
   Future<void> _choose(DiscoveryNode node, DiscoveryChoice choice) async {
@@ -66,6 +81,7 @@ class _StartupDiscoveryScreenState extends State<StartupDiscoveryScreen> {
       _saving = false;
     });
     if (_carousel.hasClients) _carousel.jumpToPage(0);
+    _speakCurrentNode();
   }
 
   Future<void> _finishNow() async {
