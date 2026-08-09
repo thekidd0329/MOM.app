@@ -31,8 +31,11 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'Chris');
-    await tester.tap(find.text('Meet MOM'));
+    final meetMom = find.widgetWithText(FilledButton, 'Meet MOM');
+    await tester.ensureVisible(meetMom);
+    await tester.tap(meetMom);
     await tester.pump();
+
     await tester.tap(find.byType(FilledButton).last, warnIfMissed: false);
     await tester.pump();
 
