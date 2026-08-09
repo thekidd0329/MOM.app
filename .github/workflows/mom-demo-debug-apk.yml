@@ -93,6 +93,13 @@ jobs:
           cp build/app/outputs/flutter-apk/app-debug.apk "$GITHUB_WORKSPACE/mom-demo-debug.apk"
           test -s "$GITHUB_WORKSPACE/mom-demo-debug.apk"
 
+      - name: Preserve built demo APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mom-demo-debug-apk
+          path: mom-demo-debug.apk
+          if-no-files-found: error
+
       - name: Verify debug APK payload
         run: |
           python3 tools/verify_android_apk.py \
@@ -121,12 +128,6 @@ jobs:
             grep -q "app.mom.mom_native" "$GITHUB_WORKSPACE/mom-demo-activity.txt"
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/mom-demo-launch.png"
             test -s "$GITHUB_WORKSPACE/mom-demo-launch.png"
-
-      - name: Upload demo APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: mom-demo-debug-apk
-          path: mom-demo-debug.apk
 
       - name: Upload emulator launch evidence
         if: always()
