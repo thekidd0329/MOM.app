@@ -63,6 +63,13 @@ void main() {
     expect(find.text('Skip intro'), findsOneWidget);
     expect(find.text('What’s your name?'), findsNothing);
 
+    // Until the actual trailer asset is bundled, the reserved video stage
+    // must not silently disappear on a timer.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
+    expect(find.text('Skip intro'), findsOneWidget);
+    expect(find.text('What’s your name?'), findsNothing);
+
     await tester.tap(find.text('Skip intro'));
     await tester.pumpAndSettle();
 
