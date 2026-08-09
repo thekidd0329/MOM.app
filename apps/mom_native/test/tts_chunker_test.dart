@@ -53,6 +53,6 @@ void main() {
     expect(source, contains('const _maxSynthesizedAhead = 2'));
     expect(source, contains('pending.length > _maxSynthesizedAhead'));
     expect(source, contains('index + _maxSynthesizedAhead'));
-    expect(source, contains('mom-response-$generation-$index.wav'));
+    expect(source, contains(r'mom-response-$generation-$index.wav'));
   });
 }
