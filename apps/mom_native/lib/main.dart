@@ -339,6 +339,7 @@ class _MomAppState extends State<MomApp> {
           };
         });
       }
+      unawaited(_voice.speak(modelFailure.userMessage).catchError((_) {}));
       unawaited(_safeEvent(
         'model_error',
         payload: {
