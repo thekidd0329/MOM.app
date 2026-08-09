@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Verify MOM's Android APK contains the staged arm64 native speech libraries.
+"""Verify MOM's Android APK and runtime manifest contract.
 
 Usage:
-    python3 tools/verify_android_apk.py <apk> <staged-jni-dir>
+    python3 tools/verify_android_apk.py <apk> <staged-jni-dir> [manifest]
 
 The staged JNI directory is expected to contain the lib*.so files copied into
-android/app/src/main/jniLibs/arm64-v8a before the Flutter release build.
+android/app/src/main/jniLibs/arm64-v8a before the Flutter release build. When a
+manifest path is supplied, MOM's required network/microphone declarations are
+also verified before the APK is accepted.
 """
 
 from __future__ import annotations
@@ -13,6 +15,31 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
+
+
+_REQUIRED_MANIFEST_DECLARATIONS = (
+    "android.permission.INTERNET",
+    "android.permission.RECORD_AUDIO",
+    "android.speech.RecognitionService",
+)
+
+
+def verify_manifest(manifest: Path) -> tuple[str, ...]:
+    if not manifest.is_file() or manifest.stat().st_size == 0:
+        raise ValueError(f"Android manifest missing or empty: {manifest}")
+
+    text = manifest.read_text(encoding="utf-8")
+    missing = [
+        declaration
+        for declaration in _REQUIRED_MANIFEST_DECLARATIONS
+        if declaration not in text
+    ]
+    if missing:
+        raise ValueError(
+            "Android manifest missing MOM runtime declarations: "
+            + ", ".join(missing)
+        )
+    return _REQUIRED_MANIFEST_DECLARATIONS
 
 
 def verify(apk: Path, staged_dir: Path) -> list[str]:
@@ -51,25 +78,32 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
+    if len(argv) not in (3, 4):
         print(
-            "usage: verify_android_apk.py <apk> <staged-jni-dir>",
+            "usage: verify_android_apk.py <apk> <staged-jni-dir> [manifest]",
             file=sys.stderr,
         )
         return 2
 
     apk = Path(argv[1]).expanduser().resolve()
     staged_dir = Path(argv[2]).expanduser().resolve()
+    manifest = Path(argv[3]).expanduser().resolve() if len(argv) == 4 else None
 
     try:
         expected = verify(apk, staged_dir)
-    except ValueError as exc:
+        declarations = verify_manifest(manifest) if manifest is not None else ()
+    except (OSError, UnicodeError, ValueError) as exc:
         print(f"MOM APK verification failed: {exc}", file=sys.stderr)
         return 1
 
+    detail = (
+        f" and all {len(declarations)} required manifest declarations"
+        if declarations
+        else ""
+    )
     print(
         f"MOM APK verified: {apk} contains all {len(expected)} staged "
-        "arm64 native libraries"
+        f"arm64 native libraries{detail}"
     )
     return 0
 
