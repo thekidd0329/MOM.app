@@ -3,21 +3,21 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('beta mic remains a safe keyboard dictation handoff', () {
-    final source = File('lib/src/mom_home_screen.dart').readAsStringSync();
+  test('mic delegates to the real listening flow', () {
+    final home = File('lib/src/mom_home_screen.dart').readAsStringSync();
+    final app = File('lib/main.dart').readAsStringSync();
 
-    expect(source, contains('onProbeMicrophone(false)'));
-    expect(source, isNot(contains('onProbeMicrophone(true)')));
-    expect(source, contains('My ears are still being constructed.'));
-    expect(source, contains('setState(() => _textMode = true)'));
-    expect(source, contains('_textFocus.requestFocus()'));
-    expect(
-      source,
-      contains('Go ahead and use your mic on your keyboard right here.'),
-    );
+    expect(home, contains('required this.onMicTap'));
+    expect(home, contains('await widget.onMicTap()'));
+    expect(app, contains('Future<void> _toggleListening() async'));
+    expect(app, contains('await _probeMicrophone(true)'));
+    expect(app, contains('await _voice.listen('));
+    expect(app, contains('onFinal: (text)'));
+    expect(app, contains('unawaited(_send(text))'));
+    expect(home, isNot(contains('My ears are still being constructed.')));
   });
 
-  test('keyboard handoff focus lifecycle remains balanced', () {
+  test('keyboard fallback focus lifecycle remains balanced', () {
     final source = File('lib/src/mom_home_screen.dart').readAsStringSync();
 
     expect(source, contains('final FocusNode _textFocus = FocusNode()'));
