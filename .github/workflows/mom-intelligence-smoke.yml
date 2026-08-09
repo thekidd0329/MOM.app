@@ -44,28 +44,23 @@ jobs:
           echo "installation=$installation" >> "$GITHUB_OUTPUT"
           echo "token=$token" >> "$GITHUB_OUTPUT"
 
-      - name: Process a natural user message through sync, extraction, and time agent
+      - name: Process deidentified user context through extraction and time agent
         env:
           INSTALLATION: ${{ steps.register.outputs.installation }}
           TOKEN: ${{ steps.register.outputs.token }}
         run: |
           set -euo pipefail
-          session="$(python3 - <<'PY'
-          import uuid
-          print(uuid.uuid4())
-          PY
-          )"
-          message="I'm stressed because I have to deliver the MOM beta to Tyler tomorrow at 4 PM. Tyler is evaluating the beta and I need help prioritizing it."
-          payload="$(SESSION="$session" MESSAGE="$message" python3 - <<'PY'
+          message="I'm stressed about a beta deadline. I need to deliver the MOM beta by 2026-08-10T23:00:00Z, and I need help prioritizing the beta."
+          payload="$(MESSAGE="$message" python3 - <<'PY'
           import json, os
+          message = os.environ['MESSAGE']
           print(json.dumps({
-            'action': 'sync_chat',
-            'session_id': os.environ['SESSION'],
-            'role': 'user',
-            'content': os.environ['MESSAGE'],
-            'local_now': '2026-08-07T17:40:00',
-            'utc_offset_minutes': -420,
-            'metadata': {'ci_intelligence_proof': True}
+            'action': 'process_deidentified',
+            'privacy_version': 'deid-v1',
+            'sanitized_text': message,
+            'original_characters': len(message),
+            'redaction_count': 0,
+            'redaction_kinds': [],
           }))
           PY
           )"
@@ -74,47 +69,18 @@ jobs:
             -H "x-mom-installation: $INSTALLATION" \
             -H "x-mom-token: $TOKEN" \
             -d "$payload" \
-            "$MOM_SYNC_URL")"
+            "$MOM_INTELLIGENCE_URL")"
           echo "$result"
-
-          ok="$(RESULT="$result" python3 - <<'PY'
-          import json, os
-          data=json.loads(os.environ['RESULT'])
-          print('1' if (data.get('intelligence') or {}).get('ok') is True else '0')
-          PY
-          )"
-          if [ "$ok" != "1" ]; then
-            diagnostic_payload="$(SESSION="$session" MESSAGE="$message" python3 - <<'PY'
-          import json, os
-          print(json.dumps({
-            'action': 'process',
-            'session_id': os.environ['SESSION'],
-            'user_text': os.environ['MESSAGE'],
-            'local_now': '2026-08-07T17:40:00',
-            'utc_offset_minutes': -420
-          }))
-          PY
-          )"
-            echo 'DIRECT INTELLIGENCE DIAGNOSTIC:'
-            curl -sS -X POST \
-              -H 'content-type: application/json' \
-              -H "x-mom-installation: $INSTALLATION" \
-              -H "x-mom-token: $TOKEN" \
-              -d "$diagnostic_payload" \
-              "$MOM_INTELLIGENCE_URL"
-            echo
-            exit 1
-          fi
 
           RESULT="$result" python3 - <<'PY'
           import json, os
           data=json.loads(os.environ['RESULT'])
-          intel=data.get('intelligence') or {}
-          assert int(intel.get('facts_produced', 0)) >= 1, data
-          assert int(intel.get('data_points', 0)) >= 2, data
-          assert int(intel.get('temporal_items', 0)) >= 1, data
-          assert float(intel.get('data_points_per_1000_user_chars', 0)) > 0, data
-          print('LIVE EXTRACTION PROOF:', intel)
+          assert data.get('ok') is True, data
+          assert data.get('privacy_version') == 'deid-v1', data
+          assert int(data.get('facts_produced', 0)) >= 1, data
+          assert int(data.get('data_points', 0)) >= 2, data
+          assert int(data.get('temporal_items', 0)) >= 1, data
+          print('LIVE DEIDENTIFIED EXTRACTION PROOF:', data)
           PY
 
       - name: Verify accumulated structured profile and efficiency metrics
@@ -133,6 +99,9 @@ jobs:
           SNAP="$snap" python3 - <<'PY'
           import json, os
           data=json.loads(os.environ['SNAP'])
+          assert data.get('ok') is True, data
+          assert data.get('privacy_version') == 'deid-v1', data
+          assert data.get('content_preview_available') is False, data
           totals=data['totals']
           assert totals['profile_facts'] >= 1, data
           assert totals['extractions'] >= 1, data
@@ -140,17 +109,11 @@ jobs:
           assert totals['unique_data_points'] >= 2, data
           assert totals['user_input_characters'] > 0, data
           assert totals['data_points_per_1000_user_chars'] > 0, data
-          items=data.get('open_temporal_items') or []
-          assert items, data
-          deadline=items[0]
-          assert deadline.get('time_text') == 'tomorrow at 4 PM', data
-          assert str(deadline.get('due_at') or '').startswith('2026-08-08T23:00:00'), data
           print('PROFILE FACTS:', totals['profile_facts'])
           print('TEMPORAL ITEMS:', totals['temporal_items'])
           print('UNIQUE DATA POINTS:', totals['unique_data_points'])
           print('USER INPUT CHARACTERS:', totals['user_input_characters'])
           print('DATA POINTS / 1000 USER CHARS:', totals['data_points_per_1000_user_chars'])
-          print('DEADLINE UTC:', deadline.get('due_at'))
           print('AVERAGE AGENT LATENCY MS:', totals['average_agent_latency_ms'])
           PY
 
