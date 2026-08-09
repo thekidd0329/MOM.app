@@ -80,7 +80,6 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     if (!mounted || run != _captionRun) return;
   }
 
-
   String get _captionWindow {
     const maxChars = 260;
     if (_caption.length <= maxChars) return _caption;
@@ -220,7 +219,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                             color: accent,
                             shadows: [
                               Shadow(
-                                color: accent.withOpacity(0.28),
+                                color: accent.withValues(alpha: 0.28),
                                 blurRadius: 14,
                               ),
                             ],
@@ -256,18 +255,17 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                                         maxLines: 5,
                                         overflow: TextOverflow.ellipsis,
                                         textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: accent,
-                                      fontSize:
-                                          constraints.maxWidth < 500 ? 18 : 21,
-                                      height: 1.28,
-                                      fontWeight: FontWeight.w600,
-                                      shadows: [
-                                        Shadow(
-                                          color: accent.withOpacity(0.24),
-                                          blurRadius: 10,
-                                        ),
-                                      ],
+                                        style: TextStyle(
+                                          color: accent,
+                                          fontSize: constraints.maxWidth < 500 ? 18 : 21,
+                                          height: 1.28,
+                                          fontWeight: FontWeight.w600,
+                                          shadows: [
+                                            Shadow(
+                                              color: accent.withValues(alpha: 0.24),
+                                              blurRadius: 10,
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -320,7 +318,7 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: accent.withOpacity(0.72),
+                            color: accent.withValues(alpha: 0.72),
                             width: 1.4,
                           ),
                         ),
@@ -389,7 +387,7 @@ class _OutlineIconButton extends StatelessWidget {
         border: Border.all(color: color, width: 2),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             blurRadius: 10,
           ),
         ],
@@ -462,10 +460,12 @@ class _ElectricOrbState extends State<_ElectricOrb>
                     borderRadius: BorderRadius.circular(999),
                     gradient: RadialGradient(
                       colors: [
-                        widget.accent.withOpacity(
-                          widget.lightMode ? 0.15 + 0.08 * pulse : 0.25 + 0.12 * pulse,
+                        widget.accent.withValues(
+                          alpha: widget.lightMode
+                              ? 0.15 + 0.08 * pulse
+                              : 0.25 + 0.12 * pulse,
                         ),
-                        widget.accent.withOpacity(0),
+                        widget.accent.withValues(alpha: 0),
                       ],
                     ),
                   ),
@@ -515,8 +515,8 @@ class _ElectricOrbPainter extends CustomPainter {
     final heat = energized ? 1.0 : 0.72;
 
     final outerGlow = Paint()
-      ..color = accent.withOpacity(
-        (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
+      ..color = accent.withValues(
+        alpha: (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
       )
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.18);
     canvas.drawCircle(center, radius * (0.98 + 0.025 * pulse), outerGlow);
@@ -526,9 +526,9 @@ class _ElectricOrbPainter extends CustomPainter {
         center: const Alignment(-0.18, -0.22),
         radius: 1.05,
         colors: [
-          Colors.white.withOpacity(lightMode ? 0.97 : 0.93),
-          const Color(0xFFE9C5FF).withOpacity(0.98),
-          accent.withOpacity(0.94),
+          Colors.white.withValues(alpha: lightMode ? 0.97 : 0.93),
+          const Color(0xFFE9C5FF).withValues(alpha: 0.98),
+          accent.withValues(alpha: 0.94),
           const Color(0xFF5B0FA3),
           const Color(0xFF140020),
         ],
@@ -542,7 +542,7 @@ class _ElectricOrbPainter extends CustomPainter {
     final deepGlow = Paint()
       ..shader = RadialGradient(
         colors: [
-          accent.withOpacity(0.14 + 0.08 * pulse),
+          accent.withValues(alpha: 0.14 + 0.08 * pulse),
           const Color(0x00140020),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: radius * 0.88));
@@ -551,11 +551,11 @@ class _ElectricOrbPainter extends CustomPainter {
     final ringPaintBack = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(0.8, radius * 0.005)
-      ..color = accent.withOpacity(lightMode ? 0.20 : 0.28);
+      ..color = accent.withValues(alpha: lightMode ? 0.20 : 0.28);
     final ringPaintFront = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF5E6FF).withOpacity(0.32 + 0.12 * pulse)
+      ..color = const Color(0xFFF5E6FF).withValues(alpha: 0.32 + 0.12 * pulse)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
     for (var r = 0; r < 4; r++) {
@@ -579,14 +579,14 @@ class _ElectricOrbPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(0.55, radius * 0.004)
-      ..color = accent.withOpacity(0.48 * heat);
+      ..color = accent.withValues(alpha: 0.48 * heat);
 
     final hot = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF8EEFF).withOpacity(0.88 * heat)
+      ..color = const Color(0xFFF8EEFF).withValues(alpha: 0.88 * heat)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
     final filamentCount = energized ? 34 : 26;
@@ -646,10 +646,10 @@ class _ElectricOrbPainter extends CustomPainter {
     final core = Paint()
       ..shader = RadialGradient(
         colors: [
-          Colors.white.withOpacity(0.98),
-          const Color(0xFFF3DEFF).withOpacity(0.92),
-          accent.withOpacity(0.55),
-          accent.withOpacity(0),
+          Colors.white.withValues(alpha: 0.98),
+          const Color(0xFFF3DEFF).withValues(alpha: 0.92),
+          accent.withValues(alpha: 0.55),
+          accent.withValues(alpha: 0),
         ],
         stops: const [0.0, 0.22, 0.52, 1.0],
       ).createShader(
@@ -665,7 +665,7 @@ class _ElectricOrbPainter extends CustomPainter {
     final rimGlow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(4.0, radius * 0.035)
-      ..color = accent.withOpacity((lightMode ? 0.12 : 0.20) * heat)
+      ..color = accent.withValues(alpha: (lightMode ? 0.12 : 0.20) * heat)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05);
     canvas.drawCircle(center, radius, rimGlow);
 
@@ -675,11 +675,11 @@ class _ElectricOrbPainter extends CustomPainter {
       ..shader = SweepGradient(
         transform: GradientRotation(spin),
         colors: [
-          accent.withOpacity(0.35),
-          const Color(0xFFF4E4FF).withOpacity(0.95),
-          accent.withOpacity(0.45),
-          const Color(0xFF7D26C9).withOpacity(0.75),
-          accent.withOpacity(0.35),
+          accent.withValues(alpha: 0.35),
+          const Color(0xFFF4E4FF).withValues(alpha: 0.95),
+          accent.withValues(alpha: 0.45),
+          const Color(0xFF7D26C9).withValues(alpha: 0.75),
+          accent.withValues(alpha: 0.35),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: radius));
     canvas.drawCircle(center, radius, edge);
