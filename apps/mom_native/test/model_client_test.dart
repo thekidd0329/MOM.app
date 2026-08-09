@@ -105,6 +105,25 @@ void main() {
     expect(failure.retryable, isTrue);
   });
 
+  test('depleted provider credits are a service-side capacity failure', () {
+    const error = MomCloudException(
+      service: 'mom-brain',
+      code: 'provider_error',
+      message: 'monthly credits depleted',
+      statusCode: 502,
+      providerStatus: 402,
+      retryable: true,
+    );
+    final failure = classifyModelFailure(error);
+    expect(failure.kind, ModelFailureKind.provider);
+    expect(failure.code, 'provider_capacity_exhausted');
+    expect(failure.stage, 'model_provider_capacity');
+    expect(failure.providerStatus, 402);
+    expect(failure.retryable, isFalse);
+    expect(failure.userMessage, contains('service-side fix'));
+    expect(failure.userMessage, contains('not anything on your phone'));
+  });
+
   test('invalid installation is classified as identity failure', () {
     const error = MomCloudException(
       service: 'mom-brain',
