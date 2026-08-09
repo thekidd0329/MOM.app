@@ -36,13 +36,13 @@ void main() {
     });
 
     test('transcript reaches the brain request', () {
-      expect(appSource, contains('final reply = await client.chat('));
+      expect(appSource, contains('final reply = await client.chatStream('));
       expect(appSource, contains('userText: text.trim()'));
     });
 
-    test('brain reply reaches Kokoro synthesis', () {
-      expect(appSource, contains('await _voice.speak('));
-      expect(appSource, contains('reply.text,'));
+    test('brain output reaches Kokoro synthesis', () {
+      expect(appSource, contains('.speakStream('));
+      expect(appSource, contains('onDelta: (delta)'));
       expect(voiceSource, contains("backend: 'kokoro'"));
       expect(voiceSource, contains('session.setVoice(request.voicePath)'));
       expect(voiceSource, contains('session.synthesize(request.text)'));
