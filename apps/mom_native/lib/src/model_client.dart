@@ -48,8 +48,9 @@ class ModelFailure {
           'My brain took too long to answer. The request timed out instead of disappearing silently.',
         ModelFailureKind.providerBusy =>
           'My model provider is overloaded right now. Give it a moment and try again.',
-        ModelFailureKind.provider =>
-          'My brain service is reachable, but the model provider is not answering correctly.',
+        ModelFailureKind.provider => providerStatus == 402
+            ? 'My model service is out of available capacity right now. This needs a service-side fix, not anything on your phone.'
+            : 'My brain service is reachable, but the model provider is not answering correctly.',
         ModelFailureKind.service =>
           'My cloud brain service is having a server problem right now.',
         ModelFailureKind.modelDiscovery =>
@@ -110,6 +111,16 @@ ModelFailure classifyModelFailure(Object error) {
       );
     }
     if (error.code == 'provider_error') {
+      if (error.providerStatus == 402) {
+        return ModelFailure(
+          kind: ModelFailureKind.provider,
+          code: 'provider_capacity_exhausted',
+          stage: 'model_provider_capacity',
+          retryable: false,
+          statusCode: error.statusCode,
+          providerStatus: error.providerStatus,
+        );
+      }
       return ModelFailure(
         kind: error.providerStatus == 429
             ? ModelFailureKind.providerBusy
