@@ -197,7 +197,7 @@ class MomVoiceService {
 
     await playback;
     if (streamError != null) {
-      Error.throwWithStackTrace(streamError!, streamStack!);
+      Error.throwWithStackTrace(streamError, streamStack!);
     }
   }
 
