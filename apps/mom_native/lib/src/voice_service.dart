@@ -90,8 +90,10 @@ class MomVoiceService {
     onState(true);
     try {
       await _speech.listen(
-        partialResults: true,
-        cancelOnError: true,
+        listenOptions: const SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: true,
+        ),
         onResult: (result) {
           if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
             onFinal(result.recognizedWords.trim());
