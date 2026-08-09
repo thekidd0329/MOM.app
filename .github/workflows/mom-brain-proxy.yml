@@ -107,6 +107,7 @@ jobs:
               'system_prompt': 'You are a connectivity test. Give a very short reply.',
               'history': [],
               'user_text': 'Reply with MOM_SERVER_OK.',
+              'context_mode': 'none',
               'knowledge_context': '',
               'model': os.environ['MODEL'],
               'temperature': 0,
@@ -115,13 +116,22 @@ jobs:
           PY
           )"
 
-          chat="$(curl --fail-with-body -sS -X POST \
+          chat_file="$(mktemp)"
+          chat_status="$(curl -sS -o "$chat_file" -w '%{http_code}' -X POST \
             -H 'content-type: application/json' \
             -H "x-mom-installation: $installation" \
             -H "x-mom-token: $token" \
             -d "$payload" \
             "$MOM_BRAIN_URL")"
+          chat="$(cat "$chat_file")"
+          rm -f "$chat_file"
+          echo "MOM brain chat HTTP $chat_status"
           echo "$chat"
+          if [[ "$chat_status" -lt 200 || "$chat_status" -ge 300 ]]; then
+            echo "::error::MOM brain completion failed with HTTP $chat_status"
+            exit 1
+          fi
+
           CHAT="$chat" python3 - <<'PY'
           import json, os
           data = json.loads(os.environ['CHAT'])
