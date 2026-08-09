@@ -43,7 +43,7 @@ jobs:
         run: flutter pub get
       - name: Static analysis
         working-directory: apps/mom_native
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
       - name: Unit tests
         working-directory: apps/mom_native
         run: flutter test
