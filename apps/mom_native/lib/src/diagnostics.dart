@@ -165,12 +165,13 @@ class DiagnosticsRunner {
     final client = ModelClient(config.copy());
     final modelHealth = await client.health();
     results.add(DiagnosticResult(
-      'Model endpoint',
+      'Brain service configuration',
       modelHealth,
       modelHealth
-          ? 'The OpenAI-compatible model endpoint responds.'
-          : 'The configured model endpoint is unavailable.',
+          ? 'The configured brain service is reachable and reports model credentials present.'
+          : 'The configured brain service is unavailable or missing model credentials.',
     ));
+
     if (modelHealth) {
       try {
         final model = await client.resolveModel();
@@ -180,7 +181,28 @@ class DiagnosticsRunner {
           'Resolved model: $model',
         ));
       } catch (error) {
-        results.add(DiagnosticResult('Model selection', false, '$error'));
+        final failure = classifyModelFailure(error);
+        results.add(DiagnosticResult(
+          'Model selection',
+          false,
+          failure.diagnosticSummary,
+        ));
+      }
+
+      try {
+        final probe = await client.probe();
+        results.add(DiagnosticResult(
+          'End-to-end brain answer',
+          true,
+          '${probe.route} completed in ${probe.latencyMs} ms using ${probe.model}. This proves a real model completion reached the app.',
+        ));
+      } catch (error) {
+        final failure = classifyModelFailure(error);
+        results.add(DiagnosticResult(
+          'End-to-end brain answer',
+          false,
+          '${failure.userMessage}\n${failure.diagnosticSummary}',
+        ));
       }
     }
     client.close();
