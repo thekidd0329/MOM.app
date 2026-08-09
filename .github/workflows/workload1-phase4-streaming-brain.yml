@@ -1,0 +1,110 @@
+name: Workload 1 Phase 4 Streaming Brain
+
+on:
+  push:
+    branches:
+      - workload1/phase4-streaming-brain
+  pull_request:
+    branches:
+      - workload1/phase3-chunked-kokoro
+    paths:
+      - "apps/mom_native/**"
+      - "supabase/functions/mom-brain-stream/**"
+      - ".github/workflows/workload1-phase4-streaming-brain.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Streaming brain-to-speech tests
+        working-directory: apps/mom_native
+        run: flutter test test/streaming_voice_test.dart
+      - name: Full Flutter suite
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Live streaming brain smoke test
+        env:
+          MOM_SYNC_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync
+          MOM_BRAIN_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain
+          MOM_STREAM_URL: https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain-stream
+          MOM_MODEL: Qwen/Qwen2.5-7B-Instruct
+        run: |
+          set -euo pipefail
+          device_id="mom-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-stream"
+          registration="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -d "{\"action\":\"register\",\"device_id\":\"$device_id\",\"platform\":\"github-actions\",\"app_version\":\"ci\",\"metadata\":{\"temporary\":true}}" \
+            "$MOM_SYNC_URL")"
+
+          installation="$(REGISTRATION="$registration" python3 - <<'PY'
+          import json, os
+          print(json.loads(os.environ['REGISTRATION'])['installation_id'])
+          PY
+          )"
+          token="$(REGISTRATION="$registration" python3 - <<'PY'
+          import json, os
+          print(json.loads(os.environ['REGISTRATION'])['token'])
+          PY
+          )"
+
+          cleanup() {
+            curl -sS -X POST \
+              -H 'content-type: application/json' \
+              -H "x-mom-installation: $installation" \
+              -H "x-mom-token: $token" \
+              -d '{"action":"unregister_test"}' \
+              "$MOM_BRAIN_URL" >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          health="$(curl --fail-with-body -sS -X POST \
+            -H 'content-type: application/json' \
+            -d '{"action":"health"}' \
+            "$MOM_STREAM_URL")"
+          echo "$health"
+          HEALTH="$health" python3 - <<'PY'
+          import json, os
+          data = json.loads(os.environ['HEALTH'])
+          assert data.get('ok') is True, data
+          assert data.get('configured') is True, data
+          assert data.get('transport') == 'sse', data
+          PY
+
+          payload="$(python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+              'action': 'chat_stream',
+              'system_prompt': 'You are a connectivity test. Give a short two-sentence reply.',
+              'history': [],
+              'user_text': 'Say MOM_STREAM_OK, then one short sentence.',
+              'model': os.environ['MOM_MODEL'],
+              'temperature': 0,
+              'max_history': 2,
+          }))
+          PY
+          )"
+
+          stream="$(curl --fail-with-body -sS -N --max-time 120 -X POST \
+            -H 'content-type: application/json' \
+            -H "x-mom-installation: $installation" \
+            -H "x-mom-token: $token" \
+            -d "$payload" \
+            "$MOM_STREAM_URL")"
+          printf '%s\n' "$stream"
+          grep -q '"type":"meta"' <<<"$stream"
+          grep -q '"type":"delta"' <<<"$stream"
+          grep -q 'data: \[DONE\]' <<<"$stream"
