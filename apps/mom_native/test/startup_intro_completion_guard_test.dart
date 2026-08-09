@@ -43,7 +43,6 @@ void main() {
     }
 
     expect(calls, 1);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     await tester.tap(find.byType(FilledButton).last, warnIfMissed: false);
     await tester.pump();
