@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
 import 'local_store.dart';
 import 'mic_status.dart';
+import 'mom_build_info.dart';
 
 class MomHomeScreen extends StatefulWidget {
   const MomHomeScreen({
@@ -19,6 +21,7 @@ class MomHomeScreen extends StatefulWidget {
     required this.onDiagnostics,
     required this.onProbeMicrophone,
     required this.onMicTap,
+    this.playStartupEntrance = false,
   });
 
   final List<ChatTurn> turns;
@@ -31,14 +34,17 @@ class MomHomeScreen extends StatefulWidget {
   final VoidCallback onDiagnostics;
   final Future<void> Function(bool requestPermission) onProbeMicrophone;
   final Future<void> Function() onMicTap;
+  final bool playStartupEntrance;
 
   @override
   State<MomHomeScreen> createState() => _MomHomeScreenState();
 }
 
-class _MomHomeScreenState extends State<MomHomeScreen> {
+class _MomHomeScreenState extends State<MomHomeScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _textFocus = FocusNode();
+  late final AnimationController _entrance;
   bool _textMode = false;
   String _caption = '';
   int _captionRun = 0;
@@ -47,6 +53,14 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
   @override
   void initState() {
     super.initState();
+    _entrance = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1850),
+      value: widget.playStartupEntrance ? 0 : 1,
+    );
+    if (widget.playStartupEntrance) {
+      unawaited(_entrance.forward());
+    }
     _maybeStartLatestCaption();
   }
 
@@ -55,6 +69,9 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.turns.length != widget.turns.length) {
       _maybeStartLatestCaption();
+    }
+    if (!oldWidget.playStartupEntrance && widget.playStartupEntrance) {
+      unawaited(_entrance.forward(from: 0));
     }
   }
 
@@ -73,13 +90,9 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     final run = ++_captionRun;
     if (text.trim().isEmpty || !mounted) return;
     setState(() => _caption = text.trim());
-
-    // Keep the latest reply visible until MOM says something else. Reading speed
-    // belongs to the user; the UI must not drip-feed text or erase it.
     await Future<void>.delayed(Duration.zero);
     if (!mounted || run != _captionRun) return;
   }
-
 
   String get _captionWindow {
     const maxChars = 260;
@@ -143,9 +156,16 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
     widget.onSend(text);
   }
 
+  double _segment(double value, double start, double end) {
+    if (value <= start) return 0;
+    if (value >= end) return 1;
+    return ((value - start) / (end - start)).clamp(0.0, 1.0);
+  }
+
   @override
   void dispose() {
     _captionRun++;
+    _entrance.dispose();
     _textFocus.dispose();
     _controller.dispose();
     super.dispose();
@@ -164,50 +184,60 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final orbSize = math.min(
-              constraints.maxWidth * 0.82,
-              constraints.maxHeight * 0.54,
+            final width = constraints.maxWidth;
+            final height = constraints.maxHeight;
+            final orbSize = math.min(width * 0.78, height * 0.49)
+                .clamp(180.0, 500.0)
+                .toDouble();
+            final finalOrbTop = (height * 0.355)
+                .clamp(142.0, math.max(142.0, height - orbSize - 145.0))
+                .toDouble();
+            final statusTop = math.max(70.0, finalOrbTop - 66.0);
+            final captionTop = math.min(
+              finalOrbTop + orbSize + 16,
+              math.max(statusTop + 90, height - 162),
             );
-            final resolvedOrbSize = orbSize.clamp(180.0, 520.0).toDouble();
 
-            return Stack(
-              children: [
-                Positioned(
-                  top: 16,
-                  left: 16,
-                  child: _OutlineIconButton(
-                    icon: widget.listening
-                        ? Icons.stop_rounded
-                        : widget.microphone.available
-                            ? Icons.mic
-                            : Icons.mic_none,
-                    color: accent,
-                    tooltip: widget.microphone.permissionGranted
-                        ? 'Use microphone'
-                        : 'Enable microphone',
-                    onPressed: _handleMicTap,
-                  ),
-                ),
-                Positioned(
-                  top: 16,
-                  right: 16,
-                  child: GestureDetector(
-                    onLongPress: widget.onDiagnostics,
-                    child: _OutlineIconButton(
-                      icon: Icons.settings,
-                      color: accent,
-                      tooltip: 'Settings',
-                      onPressed: widget.onSettings,
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 58, 24, 92),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
+            return AnimatedBuilder(
+              animation: _entrance,
+              builder: (context, _) {
+                final raw = _entrance.value;
+                final fall = Curves.easeOutCubic.transform(_segment(raw, 0.0, 0.58));
+                final orbScale = lerpDouble(0.48, 1.0, fall)!;
+                final orbLift = lerpDouble(-height * 0.17, 0, fall)!;
+                final statusReveal = Curves.easeOut.transform(_segment(raw, 0.48, 0.64));
+                final micReveal = Curves.easeOutBack.transform(_segment(raw, 0.56, 0.70));
+                final settingsReveal = Curves.easeOutBack.transform(_segment(raw, 0.66, 0.80));
+                final versionReveal = Curves.easeOutBack.transform(_segment(raw, 0.76, 0.90));
+                final keyboardReveal = Curves.easeOutBack.transform(_segment(raw, 0.86, 1.0));
+                final contentReveal = Curves.easeOut.transform(_segment(raw, 0.82, 1.0));
+                final orbCenter = Offset(
+                  width / 2,
+                  finalOrbTop + orbSize / 2 + orbLift,
+                );
+
+                return Stack(
+                  children: [
+                    if (raw < 0.999)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: _WorkflowZapPainter(
+                              accent: accent,
+                              progress: raw,
+                              origin: orbCenter,
+                              sizeHint: Size(width, height),
+                            ),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      top: statusTop,
+                      left: 20,
+                      right: 20,
+                      child: Opacity(
+                        opacity: statusReveal.clamp(0.0, 1.0),
+                        child: Text(
                           widget.busy
                               ? 'Thinking...'
                               : widget.listening
@@ -215,157 +245,323 @@ class _MomHomeScreenState extends State<MomHomeScreen> {
                                   : 'Tap the mic',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontSize: constraints.maxWidth < 500 ? 27 : 34,
+                            fontSize: width < 500 ? 27 : 34,
                             fontWeight: FontWeight.w600,
                             color: accent,
                             shadows: [
                               Shadow(
-                                color: accent.withOpacity(0.28),
+                                color: accent.withValues(alpha: 0.28),
                                 blurRadius: 14,
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 24),
-                        _ElectricOrb(
-                          size: resolvedOrbSize,
-                          accent: accent,
-                          lightMode: !dark,
-                          energized: widget.busy || widget.listening,
-                        ),
-                        const SizedBox(height: 18),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 180),
-                          child: _caption.isEmpty
-                              ? const SizedBox(height: 64)
-                              : ConstrainedBox(
-                                  key: ValueKey(_captionWindow),
-                                  constraints: BoxConstraints(
-                                    maxWidth: math.min(
-                                      720,
-                                      constraints.maxWidth * 0.88,
-                                    ),
-                                  ),
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(12),
-                                    onTap: _showHistory,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                      child: Text(
-                                        _captionWindow,
-                                        maxLines: 5,
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: accent,
-                                      fontSize:
-                                          constraints.maxWidth < 500 ? 18 : 21,
-                                      height: 1.28,
-                                      fontWeight: FontWeight.w600,
-                                      shadows: [
-                                        Shadow(
-                                          color: accent.withOpacity(0.24),
-                                          blurRadius: 10,
-                                        ),
-                                      ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 28,
-                  left: 24,
-                  child: Text(
-                    'MOM 0.5.0',
-                    style: TextStyle(
-                      color: accent,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 16,
-                  right: 16,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: accent, width: 2),
-                    ),
-                    child: IconButton(
-                      tooltip: 'Text MOM',
-                      icon: Icon(Icons.keyboard, color: accent),
-                      onPressed: _toggleTextMode,
-                    ),
-                  ),
-                ),
-                if (_textMode)
-                  Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 78,
-                    child: Material(
-                      color: dark
-                          ? const Color(0xF0141019)
-                          : const Color(0xF7FFFFFF),
-                      elevation: 12,
-                      borderRadius: BorderRadius.circular(18),
-                      child: Container(
-                        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: accent.withOpacity(0.72),
-                            width: 1.4,
+                    Positioned(
+                      top: finalOrbTop,
+                      left: (width - orbSize) / 2,
+                      child: Transform.translate(
+                        offset: Offset(0, orbLift),
+                        child: Transform.scale(
+                          scale: orbScale,
+                          child: _ElectricOrb(
+                            size: orbSize,
+                            accent: accent,
+                            lightMode: !dark,
+                            energized: widget.busy || widget.listening || raw < 1,
                           ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _controller,
-                                focusNode: _textFocus,
-                                enabled: !widget.busy,
-                                autofocus: true,
-                                minLines: 1,
-                                maxLines: 4,
-                                textInputAction: TextInputAction.send,
-                                decoration: const InputDecoration(
-                                  hintText: 'Text MOM…',
-                                  border: InputBorder.none,
-                                ),
-                                onSubmitted: (_) => _submit(),
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: widget.busy ? null : _submit,
-                              icon: widget.busy
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Icon(Icons.arrow_upward, color: accent),
-                            ),
-                          ],
                         ),
                       ),
                     ),
-                  ),
-              ],
+                    Positioned(
+                      top: captionTop,
+                      left: 24,
+                      right: 24,
+                      child: Opacity(
+                        opacity: contentReveal.clamp(0.0, 1.0),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: _caption.isEmpty
+                              ? const SizedBox(height: 64)
+                              : InkWell(
+                                  key: ValueKey(_captionWindow),
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: _showHistory,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    child: Text(
+                                      _captionWindow,
+                                      maxLines: 5,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: accent,
+                                        fontSize: width < 500 ? 18 : 21,
+                                        height: 1.28,
+                                        fontWeight: FontWeight.w600,
+                                        shadows: [
+                                          Shadow(
+                                            color: accent.withValues(alpha: 0.24),
+                                            blurRadius: 10,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 16,
+                      left: 16,
+                      child: _RevealControl(
+                        progress: micReveal,
+                        child: _OutlineIconButton(
+                          icon: widget.listening
+                              ? Icons.stop_rounded
+                              : widget.microphone.available
+                                  ? Icons.mic
+                                  : Icons.mic_none,
+                          color: accent,
+                          tooltip: widget.microphone.permissionGranted
+                              ? 'Use microphone'
+                              : 'Enable microphone',
+                          onPressed: _handleMicTap,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 16,
+                      right: 16,
+                      child: _RevealControl(
+                        progress: settingsReveal,
+                        child: GestureDetector(
+                          onLongPress: widget.onDiagnostics,
+                          child: _OutlineIconButton(
+                            icon: Icons.settings,
+                            color: accent,
+                            tooltip: 'Settings',
+                            onPressed: widget.onSettings,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 28,
+                      left: 24,
+                      child: _RevealControl(
+                        progress: versionReveal,
+                        child: Text(
+                          MomBuildInfo.displayVersion,
+                          style: TextStyle(
+                            color: accent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 16,
+                      right: 16,
+                      child: _RevealControl(
+                        progress: keyboardReveal,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: accent, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: accent.withValues(alpha: 0.10),
+                                blurRadius: 10,
+                              ),
+                            ],
+                          ),
+                          child: IconButton(
+                            tooltip: 'Text MOM',
+                            icon: Icon(Icons.keyboard, color: accent),
+                            onPressed: _toggleTextMode,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_textMode)
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 78,
+                        child: Material(
+                          color: dark
+                              ? const Color(0xF0141019)
+                              : const Color(0xF7FFFFFF),
+                          elevation: 12,
+                          borderRadius: BorderRadius.circular(18),
+                          child: Container(
+                            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: accent.withValues(alpha: 0.72),
+                                width: 1.4,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _controller,
+                                    focusNode: _textFocus,
+                                    enabled: !widget.busy,
+                                    autofocus: true,
+                                    minLines: 1,
+                                    maxLines: 4,
+                                    textInputAction: TextInputAction.send,
+                                    decoration: const InputDecoration(
+                                      hintText: 'Text MOM…',
+                                      border: InputBorder.none,
+                                    ),
+                                    onSubmitted: (_) => _submit(),
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: widget.busy ? null : _submit,
+                                  icon: widget.busy
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : Icon(Icons.arrow_upward, color: accent),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
             );
           },
         ),
       ),
     );
   }
+}
+
+class _RevealControl extends StatelessWidget {
+  const _RevealControl({required this.progress, required this.child});
+
+  final double progress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = progress.clamp(0.0, 1.0);
+    return IgnorePointer(
+      ignoring: p < 0.92,
+      child: Opacity(
+        opacity: p,
+        child: Transform.scale(
+          scale: 0.62 + 0.38 * p,
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkflowZapPainter extends CustomPainter {
+  const _WorkflowZapPainter({
+    required this.accent,
+    required this.progress,
+    required this.origin,
+    required this.sizeHint,
+  });
+
+  final Color accent;
+  final double progress;
+  final Offset origin;
+  final Size sizeHint;
+
+  double _segment(double start, double end) {
+    if (progress <= start || progress >= end) return 0;
+    final local = (progress - start) / (end - start);
+    return math.sin(local * math.pi).clamp(0.0, 1.0);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final targets = <Offset>[
+      const Offset(44, 44),
+      Offset(sizeHint.width - 44, 44),
+      Offset(62, sizeHint.height - 38),
+      Offset(sizeHint.width - 44, sizeHint.height - 42),
+    ];
+    final windows = <(double, double)>[
+      (0.52, 0.70),
+      (0.62, 0.80),
+      (0.72, 0.90),
+      (0.82, 1.0),
+    ];
+
+    for (var i = 0; i < targets.length; i++) {
+      final alpha = _segment(windows[i].$1, windows[i].$2);
+      if (alpha <= 0) continue;
+      final target = targets[i];
+      final delta = target - origin;
+      final length = delta.distance;
+      if (length <= 0) continue;
+      final normal = Offset(-delta.dy / length, delta.dx / length);
+      final path = Path()..moveTo(origin.dx, origin.dy);
+      const segments = 9;
+      for (var j = 1; j < segments; j++) {
+        final t = j / segments;
+        final base = Offset(
+          origin.dx + delta.dx * t,
+          origin.dy + delta.dy * t,
+        );
+        final wiggle = math.sin((j * 7.37) + i * 2.9 + progress * 31) *
+            (10.0 * (1 - (t - 0.5).abs()));
+        final p = base + normal * wiggle;
+        path.lineTo(p.dx, p.dy);
+      }
+      path.lineTo(target.dx, target.dy);
+
+      final glow = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 7
+        ..strokeCap = StrokeCap.round
+        ..color = accent.withValues(alpha: 0.22 * alpha)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+      final hot = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.1
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.white.withValues(alpha: 0.84 * alpha);
+      final purple = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.4
+        ..strokeCap = StrokeCap.round
+        ..color = accent.withValues(alpha: 0.74 * alpha);
+      canvas.drawPath(path, glow);
+      canvas.drawPath(path, purple);
+      canvas.drawPath(path, hot);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WorkflowZapPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.origin != origin ||
+      oldDelegate.accent != accent ||
+      oldDelegate.sizeHint != sizeHint;
 }
 
 class _OutlineIconButton extends StatelessWidget {
@@ -389,7 +585,7 @@ class _OutlineIconButton extends StatelessWidget {
         border: Border.all(color: color, width: 2),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             blurRadius: 10,
           ),
         ],
@@ -462,10 +658,12 @@ class _ElectricOrbState extends State<_ElectricOrb>
                     borderRadius: BorderRadius.circular(999),
                     gradient: RadialGradient(
                       colors: [
-                        widget.accent.withOpacity(
-                          widget.lightMode ? 0.15 + 0.08 * pulse : 0.25 + 0.12 * pulse,
+                        widget.accent.withValues(
+                          alpha: widget.lightMode
+                              ? 0.15 + 0.08 * pulse
+                              : 0.25 + 0.12 * pulse,
                         ),
-                        widget.accent.withOpacity(0),
+                        widget.accent.withValues(alpha: 0),
                       ],
                     ),
                   ),
@@ -515,8 +713,8 @@ class _ElectricOrbPainter extends CustomPainter {
     final heat = energized ? 1.0 : 0.72;
 
     final outerGlow = Paint()
-      ..color = accent.withOpacity(
-        (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
+      ..color = accent.withValues(
+        alpha: (lightMode ? 0.18 : 0.31) * (0.86 + 0.18 * pulse) * heat,
       )
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.18);
     canvas.drawCircle(center, radius * (0.98 + 0.025 * pulse), outerGlow);
@@ -526,9 +724,9 @@ class _ElectricOrbPainter extends CustomPainter {
         center: const Alignment(-0.18, -0.22),
         radius: 1.05,
         colors: [
-          Colors.white.withOpacity(lightMode ? 0.97 : 0.93),
-          const Color(0xFFE9C5FF).withOpacity(0.98),
-          accent.withOpacity(0.94),
+          Colors.white.withValues(alpha: lightMode ? 0.97 : 0.93),
+          const Color(0xFFE9C5FF).withValues(alpha: 0.98),
+          accent.withValues(alpha: 0.94),
           const Color(0xFF5B0FA3),
           const Color(0xFF140020),
         ],
@@ -537,12 +735,14 @@ class _ElectricOrbPainter extends CustomPainter {
     canvas.drawCircle(center, radius, body);
 
     canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: center, radius: radius)));
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius)),
+    );
 
     final deepGlow = Paint()
       ..shader = RadialGradient(
         colors: [
-          accent.withOpacity(0.14 + 0.08 * pulse),
+          accent.withValues(alpha: 0.14 + 0.08 * pulse),
           const Color(0x00140020),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: radius * 0.88));
@@ -551,11 +751,11 @@ class _ElectricOrbPainter extends CustomPainter {
     final ringPaintBack = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(0.8, radius * 0.005)
-      ..color = accent.withOpacity(lightMode ? 0.20 : 0.28);
+      ..color = accent.withValues(alpha: lightMode ? 0.20 : 0.28);
     final ringPaintFront = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF5E6FF).withOpacity(0.32 + 0.12 * pulse)
+      ..color = const Color(0xFFF5E6FF).withValues(alpha: 0.32 + 0.12 * pulse)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
     for (var r = 0; r < 4; r++) {
@@ -579,14 +779,14 @@ class _ElectricOrbPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(0.55, radius * 0.004)
-      ..color = accent.withOpacity(0.48 * heat);
+      ..color = accent.withValues(alpha: 0.48 * heat);
 
     final hot = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(1.0, radius * 0.007)
-      ..color = const Color(0xFFF8EEFF).withOpacity(0.88 * heat)
+      ..color = const Color(0xFFF8EEFF).withValues(alpha: 0.88 * heat)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.006);
 
     final filamentCount = energized ? 34 : 26;
@@ -646,10 +846,10 @@ class _ElectricOrbPainter extends CustomPainter {
     final core = Paint()
       ..shader = RadialGradient(
         colors: [
-          Colors.white.withOpacity(0.98),
-          const Color(0xFFF3DEFF).withOpacity(0.92),
-          accent.withOpacity(0.55),
-          accent.withOpacity(0),
+          Colors.white.withValues(alpha: 0.98),
+          const Color(0xFFF3DEFF).withValues(alpha: 0.92),
+          accent.withValues(alpha: 0.55),
+          accent.withValues(alpha: 0),
         ],
         stops: const [0.0, 0.22, 0.52, 1.0],
       ).createShader(
@@ -665,7 +865,7 @@ class _ElectricOrbPainter extends CustomPainter {
     final rimGlow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(4.0, radius * 0.035)
-      ..color = accent.withOpacity((lightMode ? 0.12 : 0.20) * heat)
+      ..color = accent.withValues(alpha: (lightMode ? 0.12 : 0.20) * heat)
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05);
     canvas.drawCircle(center, radius, rimGlow);
 
@@ -675,11 +875,11 @@ class _ElectricOrbPainter extends CustomPainter {
       ..shader = SweepGradient(
         transform: GradientRotation(spin),
         colors: [
-          accent.withOpacity(0.35),
-          const Color(0xFFF4E4FF).withOpacity(0.95),
-          accent.withOpacity(0.45),
-          const Color(0xFF7D26C9).withOpacity(0.75),
-          accent.withOpacity(0.35),
+          accent.withValues(alpha: 0.35),
+          const Color(0xFFF4E4FF).withValues(alpha: 0.95),
+          accent.withValues(alpha: 0.45),
+          const Color(0xFF7D26C9).withValues(alpha: 0.75),
+          accent.withValues(alpha: 0.35),
         ],
       ).createShader(Rect.fromCircle(center: center, radius: radius));
     canvas.drawCircle(center, radius, edge);

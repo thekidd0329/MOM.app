@@ -1,0 +1,51 @@
+name: Workload 4 UI
+
+on:
+  push:
+    branches:
+      - workload-4-beta-ui
+    paths:
+      - "apps/mom_native/lib/src/mom_home_screen.dart"
+      - "apps/mom_native/lib/src/mom_launch_screen.dart"
+      - "apps/mom_native/lib/src/mom_settings_screen.dart"
+      - "apps/mom_native/lib/src/mom_build_info.dart"
+      - "apps/mom_native/test/beta_ui_contract_test.dart"
+      - ".github/workflows/workload4-ui.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/lib/src/mom_home_screen.dart"
+      - "apps/mom_native/lib/src/mom_launch_screen.dart"
+      - "apps/mom_native/lib/src/mom_settings_screen.dart"
+      - "apps/mom_native/lib/src/mom_build_info.dart"
+      - "apps/mom_native/test/beta_ui_contract_test.dart"
+      - ".github/workflows/workload4-ui.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  ui-contract:
+    name: Strict UI contract
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mom_native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        run: flutter pub get
+      - name: Strict analyze Workload 4 files
+        run: |
+          dart analyze --fatal-infos lib/src/mom_home_screen.dart
+          dart analyze --fatal-infos lib/src/mom_launch_screen.dart
+          dart analyze --fatal-infos lib/src/mom_settings_screen.dart
+          dart analyze --fatal-infos lib/src/mom_build_info.dart
+          dart analyze --fatal-infos test/beta_ui_contract_test.dart
+      - name: Run Workload 4 UI tests
+        run: flutter test test/beta_ui_contract_test.dart
