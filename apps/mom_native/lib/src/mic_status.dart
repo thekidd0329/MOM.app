@@ -59,11 +59,9 @@ class MomRuntimeDeviceState {
 
   static String get promptContext => '''
 ## Current device context
-Input mode: text.
 Microphone state: ${microphone.label}.
 Microphone permission granted: ${microphone.permissionGranted}.
 Detected microphone inputs: ${microphone.inputCount}.
-Voice capture is not enabled in this beta yet.
 Treat this as live device state, not as a personal fact about your person. Do not narrate these implementation details unless they are relevant to what your person asks.
 '''.trim();
 }
