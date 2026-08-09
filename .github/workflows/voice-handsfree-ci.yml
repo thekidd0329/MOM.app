@@ -7,6 +7,12 @@ on:
     paths:
       - "apps/mom_native/**"
       - ".github/workflows/voice-handsfree-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/voice-handsfree-ci.yml"
 
 permissions:
   contents: read
