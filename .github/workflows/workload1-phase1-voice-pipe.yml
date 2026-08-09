@@ -1,0 +1,119 @@
+name: Workload 1 Phase 1 Voice Pipe
+
+on:
+  push:
+    branches:
+      - workload1/phase1-mic-pipe
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/**"
+      - "tools/verify_android_apk.py"
+      - ".github/workflows/workload1-phase1-voice-pipe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Permission to speaker contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Voice pipeline contract tests
+        working-directory: apps/mom_native
+        run: flutter test test/voice_pipeline_phase1_test.dart
+      - name: Full Flutter test suite
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Live MOM brain health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"action":"health"}' https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain)"
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+          echo "$body" | grep -q '"configured":true'
+          echo "$body" | grep -q '"service":"mom-brain"'
+
+  android:
+    name: Android voice runtime package
+    needs: contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build repository knowledge bundle
+        run: python3 tools/build_mom_knowledge.py
+      - name: Generate Android shell and voice runtime
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android --org app.mom --project-name mom_native "$RUNNER_TEMP/mom_android"
+          rm -rf "$RUNNER_TEMP/mom_android/lib" "$RUNNER_TEMP/mom_android/test"
+          cp -a apps/mom_native/lib "$RUNNER_TEMP/mom_android/lib"
+          cp -a apps/mom_native/test "$RUNNER_TEMP/mom_android/test"
+          cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_android/pubspec.yaml"
+          rm -rf "$RUNNER_TEMP/mom_android/assets"
+          cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
+
+          git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$RUNNER_TEMP/crispasr"
+          ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$RUNNER_TEMP/crispasr/build-android.sh" --abi arm64-v8a
+          CRISP_BUILD="$RUNNER_TEMP/crispasr/build-android/arm64-v8a"
+          CRISP_DEST="$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$CRISP_DEST"
+          mapfile -t crisp_libs < <(find "$CRISP_BUILD" -type f -name 'lib*.so' -print)
+          test "${#crisp_libs[@]}" -gt 0
+          cp "${crisp_libs[@]}" "$CRISP_DEST/"
+          test -f "$CRISP_DEST/libcrispasr.so"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          permissions = []
+          if 'android.permission.INTERNET' not in s:
+              permissions.append('    <uses-permission android:name="android.permission.INTERNET" />')
+          if 'android.permission.RECORD_AUDIO' not in s:
+              permissions.append('    <uses-permission android:name="android.permission.RECORD_AUDIO" />')
+          if permissions:
+              s = s.replace(marker, marker + '\n' + '\n'.join(permissions))
+          if '<queries>' not in s:
+              queries = '''    <queries>
+                  <intent>
+                      <action android:name="android.speech.RecognitionService" />
+                  </intent>
+              </queries>
+          '''
+              s = s.replace('</manifest>', queries + '</manifest>')
+          p.write_text(s)
+          PY
+      - name: Build release APK
+        working-directory: ${{ runner.temp }}/mom_android
+        run: flutter pub get && flutter build apk --release --target-platform android-arm64
+      - name: Verify permission, STT query, and Kokoro native runtime
+        run: |
+          python3 tools/verify_android_apk.py \
+            "$RUNNER_TEMP/mom_android/build/app/outputs/flutter-apk/app-release.apk" \
+            "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workload1-phase1-mom-android-apk
+          path: ${{ runner.temp }}/mom_android/build/app/outputs/flutter-apk/app-release.apk
