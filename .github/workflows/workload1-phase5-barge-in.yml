@@ -1,0 +1,46 @@
+name: Workload 1 Phase 5 Barge In
+
+on:
+  push:
+    branches:
+      - workload1/phase5-barge-in
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/workload1-phase5-barge-in.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Barge-in continuity contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Dart packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Static analysis
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Barge-in and interrupted-thought tests
+        working-directory: apps/mom_native
+        run: flutter test test/barge_in_controller_test.dart test/voice_barge_in_phase5_test.dart
+      - name: Full Flutter test suite
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Live MOM brain health
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"action":"health"}' https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-brain)"
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+          echo "$body" | grep -q '"configured":true'
+          echo "$body" | grep -q '"service":"mom-brain"'
