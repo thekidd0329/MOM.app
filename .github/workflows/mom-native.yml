@@ -129,6 +129,7 @@ jobs:
         run: python3 tools/build_mom_knowledge.py
       - name: Generate native Android shell
         run: |
+          set -euo pipefail
           flutter create --platforms=android --org app.mom --project-name mom_native "$RUNNER_TEMP/mom_android"
           rm -rf "$RUNNER_TEMP/mom_android/lib" "$RUNNER_TEMP/mom_android/test"
           cp -a apps/mom_native/lib "$RUNNER_TEMP/mom_android/lib"
@@ -138,8 +139,17 @@ jobs:
           cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
           git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$RUNNER_TEMP/crispasr"
           ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$RUNNER_TEMP/crispasr/build-android.sh" --abi arm64-v8a
-          mkdir -p "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
-          cp "$RUNNER_TEMP/crispasr/build-android/arm64-v8a/src/libcrispasr.so" "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a/"
+          CRISP_BUILD="$RUNNER_TEMP/crispasr/build-android/arm64-v8a"
+          CRISP_DEST="$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$CRISP_DEST"
+          mapfile -t crisp_libs < <(find "$CRISP_BUILD" -type f -name 'lib*.so' -print)
+          if [ "${#crisp_libs[@]}" -eq 0 ]; then
+            echo "::error::CrispASR Android build produced no shared libraries"
+            exit 1
+          fi
+          cp "${crisp_libs[@]}" "$CRISP_DEST/"
+          test -f "$CRISP_DEST/libcrispasr.so"
+          echo "Packaged ${#crisp_libs[@]} CrispASR Android libraries"
           python3 - <<'PY'
           from pathlib import Path
           p = Path(r"${{ runner.temp }}/mom_android/android/app/src/main/AndroidManifest.xml")
