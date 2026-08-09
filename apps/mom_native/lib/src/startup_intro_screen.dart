@@ -5,6 +5,7 @@ class StartupIntroStore {
   static const _completeKey = 'mom_startup_intro_complete';
   static const _languageKey = 'mom_startup_language';
   static const _nameKey = 'mom_person_name';
+  static const _momStyleKey = 'mom_style';
 
   Future<bool> isComplete() async {
     final prefs = await SharedPreferences.getInstance();
@@ -14,6 +15,16 @@ class StartupIntroStore {
   Future<String> savedName() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_nameKey) ?? '';
+  }
+
+  Future<String> savedMomStyle() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_momStyleKey) ?? 'balanced';
+  }
+
+  Future<void> saveMomStyle(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_momStyleKey, value);
   }
 
   Future<bool> allowsStrongLanguage() async {
@@ -33,12 +44,17 @@ class StartupIntroStore {
 }
 
 class StartupIntroScreen extends StatefulWidget {
-  const StartupIntroScreen({super.key, required this.onComplete});
+  const StartupIntroScreen({
+    super.key,
+    required this.onComplete,
+    this.onSpeak,
+  });
 
   final Future<void> Function({
     required bool allowStrongLanguage,
     required String name,
   }) onComplete;
+  final Future<void> Function(String text)? onSpeak;
 
   @override
   State<StartupIntroScreen> createState() => _StartupIntroScreenState();
@@ -46,15 +62,36 @@ class StartupIntroScreen extends StatefulWidget {
 
 class _StartupIntroScreenState extends State<StartupIntroScreen> {
   final TextEditingController _name = TextEditingController();
+  final StartupIntroStore _store = StartupIntroStore();
   int _stage = 0;
   bool _allowStrongLanguage = true;
+  String _momStyle = 'balanced';
   bool _finishing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _speakStage(0));
+  }
+
+  void _speakStage(int stage) {
+    final speak = widget.onSpeak;
+    if (speak == null) return;
+    final text = switch (stage) {
+      0 => 'Before MOM moves in, choose how you want her to talk. She can be blunt, emotional, opinionated, and vulgar. Choose swearing is fine, or clean pair of underwear mode.',
+      1 => 'Give this your full attention. The next part introduces MOM. Do not watch while driving or doing anything that needs your eyes.',
+      3 => 'What kind of mom are you looking for? Gentle and reassuring, blunt tough love, balanced, or one who learns you and adapts? Then tell me what name you want me to call you.',
+      _ => '',
+    };
+    if (text.isNotEmpty) speak(text);
+  }
 
   void _chooseLanguage(bool value) {
     setState(() {
       _allowStrongLanguage = value;
       _stage = 1;
     });
+    _speakStage(1);
   }
 
   void _enterVideoStage() {
@@ -67,6 +104,11 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   void _finishVideo() {
     if (!mounted || _stage != 2) return;
     setState(() => _stage = 3);
+    _speakStage(3);
+  }
+
+  void _chooseMomStyle(String value) {
+    setState(() => _momStyle = value);
   }
 
   Future<void> _finish() async {
@@ -76,6 +118,7 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
 
     setState(() => _finishing = true);
     try {
+      await _store.saveMomStyle(_momStyle);
       await widget.onComplete(
         allowStrongLanguage: _allowStrongLanguage,
         name: name,
@@ -114,6 +157,8 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
                   controller: _name,
                   onContinue: _finish,
                   finishing: _finishing,
+                  momStyle: _momStyle,
+                  onMomStyle: _chooseMomStyle,
                 ),
             },
           ),
@@ -211,20 +256,48 @@ class _NameStage extends StatelessWidget {
     required this.controller,
     required this.onContinue,
     required this.finishing,
+    required this.momStyle,
+    required this.onMomStyle,
   });
 
   final TextEditingController controller;
   final Future<void> Function() onContinue;
   final bool finishing;
+  final String momStyle;
+  final ValueChanged<String> onMomStyle;
 
   @override
   Widget build(BuildContext context) {
     return _StageFrame(
       key: const ValueKey('name'),
       eyebrow: 'MOM',
-      title: 'What’s your name?',
-      body: 'Just the name you want MOM to call you.',
+      title: 'What kind of mom are you looking for?',
+      body: 'Pick the closest fit. MOM will keep learning you after this.',
       children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: const [
+            ('gentle', 'Gentle and reassuring'),
+            ('tough_love', 'Blunt tough love'),
+            ('balanced', 'A balance of both'),
+            ('adaptive', 'Learn me and adapt'),
+          ].map((option) {
+            return ChoiceChip(
+              label: Text(option.$2),
+              selected: momStyle == option.$1,
+              onSelected: finishing ? null : (_) => onMomStyle(option.$1),
+            );
+          }).toList(growable: false),
+        ),
+        const SizedBox(height: 28),
+        Text(
+          'What’s your name?',
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+        const SizedBox(height: 10),
         TextField(
           controller: controller,
           enabled: !finishing,
