@@ -53,9 +53,8 @@ class MomVoiceConversationController {
   }
 
   bool listeningEndedWithoutTurn() {
-    if (_phase == MomVoiceConversationPhase.listening) {
-      _phase = MomVoiceConversationPhase.idle;
-    }
+    if (_phase != MomVoiceConversationPhase.listening) return false;
+    _phase = MomVoiceConversationPhase.idle;
     return _active;
   }
 
