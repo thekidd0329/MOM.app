@@ -1,7 +1,7 @@
 {
   "result": "failure",
   "version": "0.5.0+7",
-  "commit": "e803597a33fc2c0d616caa20fd427e11bf0bff25",
-  "run_id": 31302841820,
-  "artifact": "mom-android-debug-0.5.0+7-e803597"
+  "commit": "987d67ee552b6cb78fa504ea5ff1ef372af1e3b8",
+  "run_id": 31303126168,
+  "artifact": "mom-android-debug-0.5.0+7-987d67e"
 }
