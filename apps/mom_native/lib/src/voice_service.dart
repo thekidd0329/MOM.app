@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -9,16 +10,20 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'tts_chunker.dart';
+
 const _modelName = 'kokoro-82m-q8_0.gguf';
 const _voiceName = 'kokoro-voice-af_heart.gguf';
 const _modelUrl =
     'https://huggingface.co/cstr/kokoro-82m-GGUF/resolve/main/kokoro-82m-q8_0.gguf?download=true';
 const _voiceUrl =
     'https://huggingface.co/cstr/kokoro-voices-GGUF/resolve/main/kokoro-voice-af_heart.gguf?download=true';
+const _maxSynthesizedAhead = 2;
 
 class MomVoiceService {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
+  final MomTtsChunker _chunker = const MomTtsChunker();
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
@@ -117,28 +122,23 @@ class MomVoiceService {
     void Function()? onSynthesisStart,
     void Function()? onPlaybackStart,
   }) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    final chunks = _chunker.chunk(text);
+    if (chunks.isEmpty) return;
 
     final generation = ++_speechGeneration;
     final assets = await _prepareVoiceAssets();
     if (generation != _speechGeneration) return;
 
     onSynthesisStart?.call();
-    final request = _SynthesisRequest(
-      modelPath: assets.model.path,
-      voicePath: assets.voice.path,
-      text: trimmed,
-    );
-    final wav = await Isolate.run(() => _synthesize(request));
-    if (generation != _speechGeneration) return;
+    final pending = <int, Future<Uint8List>>{};
 
-    final output =
-        File('${assets.directory.path}/mom-response-$generation.wav');
-    await output.writeAsBytes(wav, flush: true);
-    if (generation != _speechGeneration) {
-      if (await output.exists()) await output.delete();
-      return;
+    Future<Uint8List> synthesizeChunk(int index) {
+      final request = _SynthesisRequest(
+        modelPath: assets.model.path,
+        voicePath: assets.voice.path,
+        text: chunks[index],
+      );
+      return Isolate.run(() => _synthesize(request));
     }
 
     await _player.stop();
@@ -146,23 +146,45 @@ class MomVoiceService {
     if (previous != null && await previous.exists()) {
       await previous.delete();
     }
-    if (generation != _speechGeneration) {
+    _playingFile = null;
+
+    for (var index = 0; index < chunks.length; index++) {
+      if (generation != _speechGeneration) return;
+
+      final prefetchEnd = math.min(
+        chunks.length,
+        index + _maxSynthesizedAhead,
+      );
+      for (var queued = index; queued < prefetchEnd; queued++) {
+        pending.putIfAbsent(queued, () => synthesizeChunk(queued));
+      }
+      if (pending.length > _maxSynthesizedAhead) {
+        throw StateError('Kokoro synthesis queue exceeded memory bound');
+      }
+
+      final wav = await pending.remove(index)!;
+      if (generation != _speechGeneration) return;
+
+      final output = File(
+        '${assets.directory.path}/mom-response-$generation-$index.wav',
+      );
+      await output.writeAsBytes(wav, flush: true);
+      if (generation != _speechGeneration) {
+        if (await output.exists()) await output.delete();
+        return;
+      }
+
+      final completed = _player.onPlayerComplete.first;
+      if (index == 0) onPlaybackStart?.call();
+      await _player.play(DeviceFileSource(output.path));
+      _playingFile = output;
+      await completed.timeout(
+        const Duration(minutes: 2),
+        onTimeout: () {},
+      );
+
       if (await output.exists()) await output.delete();
-      return;
-    }
-
-    final completed = _player.onPlayerComplete.first;
-    onPlaybackStart?.call();
-    await _player.play(DeviceFileSource(output.path));
-    _playingFile = output;
-    await completed.timeout(
-      const Duration(minutes: 2),
-      onTimeout: () {},
-    );
-
-    if (generation == _speechGeneration && await output.exists()) {
-      await output.delete();
-      _playingFile = null;
+      if (identical(_playingFile, output)) _playingFile = null;
     }
   }
 
