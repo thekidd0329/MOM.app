@@ -12,6 +12,7 @@ import 'src/local_store.dart';
 import 'src/mic_status.dart';
 import 'src/model_client.dart';
 import 'src/mom_home_screen.dart';
+import 'src/mom_launch_screen.dart';
 import 'src/mom_settings_screen.dart';
 import 'src/startup_discovery/discovery_models.dart';
 import 'src/startup_discovery/discovery_screen.dart';
@@ -420,7 +421,7 @@ class _MomAppState extends State<MomApp> {
     Widget home;
     if (_booting) {
       home = _startupIntroKnown && _returningBoot
-          ? MomBootScreen(status: _status)
+          ? MomLaunchScreen(status: _status)
           : const Scaffold(
               backgroundColor: Colors.black,
               body: SizedBox.expand(),
