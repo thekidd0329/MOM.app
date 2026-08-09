@@ -645,7 +645,7 @@ class _PlasmaOrbPainter extends CustomPainter {
       radius * (1.01 + 0.018 * pulse),
       Paint()
         ..color = accent.withValues(
-          alpha: ((0.29 + 0.09 * pulse) * energy).clamp(0, 1),
+          alpha: math.min(1.0, (0.29 + 0.09 * pulse) * energy),
         )
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.17),
     );
@@ -678,7 +678,7 @@ class _PlasmaOrbPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(3.2, radius * 0.025)
       ..color = const Color(0xFF9B31FF).withValues(
-        alpha: (0.30 * energy).clamp(0, 1),
+        alpha: math.min(1.0, 0.30 * energy),
       )
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.025);
 
@@ -688,7 +688,7 @@ class _PlasmaOrbPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..strokeWidth = math.max(0.9, radius * 0.0065)
       ..color = const Color(0xFFDFA6FF).withValues(
-        alpha: (0.92 * energy).clamp(0, 1),
+        alpha: math.min(1.0, 0.92 * energy),
       );
 
     final branch = Paint()
@@ -696,7 +696,7 @@ class _PlasmaOrbPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeWidth = math.max(0.55, radius * 0.004)
       ..color = const Color(0xFFA83FFF).withValues(
-        alpha: (0.66 * energy).clamp(0, 1),
+        alpha: math.min(1.0, 0.66 * energy),
       );
 
     for (var i = 0; i < _filamentCount; i++) {
@@ -765,7 +765,9 @@ class _PlasmaOrbPainter extends CustomPainter {
       center,
       coreRadius * 2.6,
       Paint()
-        ..color = accent.withValues(alpha: (0.44 * energy).clamp(0, 1))
+        ..color = accent.withValues(
+          alpha: math.min(1.0, 0.44 * energy),
+        )
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.09),
     );
     canvas.drawCircle(
@@ -809,7 +811,9 @@ class _PlasmaOrbPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(1.6, radius * 0.010)
-        ..color = accent.withValues(alpha: (0.78 * energy).clamp(0, 1)),
+        ..color = accent.withValues(
+          alpha: math.min(1.0, 0.78 * energy),
+        ),
     );
 
     canvas.drawCircle(
@@ -818,7 +822,9 @@ class _PlasmaOrbPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(4.0, radius * 0.025)
-        ..color = accent.withValues(alpha: (0.18 * energy).clamp(0, 1))
+        ..color = accent.withValues(
+          alpha: math.min(1.0, 0.18 * energy),
+        )
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.05),
     );
   }
