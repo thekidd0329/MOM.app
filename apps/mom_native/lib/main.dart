@@ -306,14 +306,17 @@ class _MomAppState extends State<MomApp> {
         'output_mode': 'orb_caption',
       }));
     } catch (error) {
+      final modelFailure = classifyModelFailure(error);
       final failure = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
-        content:
-            'Something between me and my brain is not answering. Try that again in a second.',
+        content: modelFailure.userMessage,
         createdAt: DateTime.now(),
-        metadata: const {
+        metadata: {
           'local_error': true,
+          'model_error_code': modelFailure.code,
+          'model_error_stage': modelFailure.stage,
+          'model_error_retryable': modelFailure.retryable,
           'output_mode': 'orb_caption',
         },
       );
@@ -322,12 +325,32 @@ class _MomAppState extends State<MomApp> {
         setState(() {
           _turns = [..._turns, failure];
           _captionTurns = [..._captionTurns, failure];
-          _status = 'offline';
+          _status = switch (modelFailure.kind) {
+            ModelFailureKind.identity => 'identity reconnect failed',
+            ModelFailureKind.network => 'network issue',
+            ModelFailureKind.timeout => 'brain timeout',
+            ModelFailureKind.providerBusy => 'provider busy',
+            ModelFailureKind.provider => 'provider issue',
+            ModelFailureKind.service => 'brain service issue',
+            ModelFailureKind.modelDiscovery => 'model unavailable',
+            ModelFailureKind.response => 'brain response issue',
+            ModelFailureKind.configuration => 'brain configuration issue',
+            ModelFailureKind.unknown => 'brain issue',
+          };
         });
       }
+      unawaited(_voice.speak(modelFailure.userMessage).catchError((_) {}));
       unawaited(_safeEvent(
         'model_error',
-        payload: {'error_type': error.runtimeType.toString()},
+        payload: {
+          'error_code': modelFailure.code,
+          'error_stage': modelFailure.stage,
+          'retryable': modelFailure.retryable,
+          if (modelFailure.statusCode != null)
+            'http_status': modelFailure.statusCode,
+          if (modelFailure.providerStatus != null)
+            'provider_http_status': modelFailure.providerStatus,
+        },
       ));
     } finally {
       client.close();
