@@ -691,6 +691,11 @@ class _IntroPlasmaMark extends StatelessWidget {
           ),
         ],
       ),
+      child: const Icon(
+        Icons.play_circle_outline,
+        size: 62,
+        color: Color(0xFF2B003D),
+      ),
     );
   }
 }
