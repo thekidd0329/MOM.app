@@ -327,6 +327,8 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+
     return Theme(
       data: ThemeData.dark(useMaterial3: true).copyWith(
         scaffoldBackgroundColor: Colors.black,
@@ -339,7 +341,7 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
         backgroundColor: Colors.black,
         body: SafeArea(
           child: AnimatedSwitcher(
-            duration: MediaQuery.disableAnimationsOf(context)
+            duration: reduceMotion
                 ? Duration.zero
                 : const Duration(milliseconds: 280),
             child: switch (_stage) {
@@ -347,8 +349,6 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
               1 => _AttentionStage(onContinue: _enterVideoStage),
               2 => _VideoStage(
                   onSkip: () => _finishVideo(productionVideoPlayed: false),
-                  onProductionVideoFinished: () =>
-                      _finishVideo(productionVideoPlayed: true),
                 ),
               _ => _NameStage(
                   controller: _name,
@@ -417,13 +417,9 @@ class _AttentionStage extends StatelessWidget {
 }
 
 class _VideoStage extends StatelessWidget {
-  const _VideoStage({
-    required this.onSkip,
-    required this.onProductionVideoFinished,
-  });
+  const _VideoStage({required this.onSkip});
 
   final VoidCallback onSkip;
-  final VoidCallback onProductionVideoFinished;
 
   @override
   Widget build(BuildContext context) {
@@ -501,7 +497,8 @@ class _NameStage extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         DropdownButtonFormField<String>(
-          value: selected.id,
+          key: ValueKey(selected.id),
+          initialValue: selected.id,
           isExpanded: true,
           decoration: const InputDecoration(
             border: OutlineInputBorder(),
