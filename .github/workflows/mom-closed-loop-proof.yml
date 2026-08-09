@@ -45,28 +45,23 @@ jobs:
           echo "installation=$installation" >> "$GITHUB_OUTPUT"
           echo "token=$token" >> "$GITHUB_OUTPUT"
 
-      - name: Create structured memory from ordinary conversation
+      - name: Create structured memory from deidentified conversation context
         env:
           INSTALLATION: ${{ steps.register.outputs.installation }}
           TOKEN: ${{ steps.register.outputs.token }}
         run: |
           set -euo pipefail
-          session="$(python3 - <<'PY'
-          import uuid
-          print(uuid.uuid4())
-          PY
-          )"
-          echo "$session" > /tmp/mom_session
-          payload="$(SESSION="$session" python3 - <<'PY'
+          message="I'm stressed about a beta deadline. I need to deliver the MOM beta by 2026-08-10T23:00:00Z, and I need help prioritizing the beta."
+          payload="$(MESSAGE="$message" python3 - <<'PY'
           import json, os
+          message = os.environ['MESSAGE']
           print(json.dumps({
-            'action': 'sync_chat',
-            'session_id': os.environ['SESSION'],
-            'role': 'user',
-            'content': "I'm stressed because I have to deliver the MOM beta to Tyler tomorrow at 4 PM. Tyler is evaluating it and I need help prioritizing the beta.",
-            'local_now': '2026-08-07T17:40:00',
-            'utc_offset_minutes': -420,
-            'metadata': {'ci_closed_loop': True}
+            'action': 'process_deidentified',
+            'privacy_version': 'deid-v1',
+            'sanitized_text': message,
+            'original_characters': len(message),
+            'redaction_count': 0,
+            'redaction_kinds': [],
           }))
           PY
           )"
@@ -75,15 +70,15 @@ jobs:
             -H "x-mom-installation: $INSTALLATION" \
             -H "x-mom-token: $TOKEN" \
             -d "$payload" \
-            "$MOM_SYNC_URL")"
+            "$MOM_INTELLIGENCE_URL")"
           echo "$result"
           RESULT="$result" python3 - <<'PY'
           import json, os
           data=json.loads(os.environ['RESULT'])
-          intel=data.get('intelligence') or {}
-          assert intel.get('ok') is True, data
-          assert int(intel.get('facts_produced', 0)) >= 2, data
-          assert int(intel.get('temporal_items', 0)) >= 1, data
+          assert data.get('ok') is True, data
+          assert data.get('privacy_version') == 'deid-v1', data
+          assert int(data.get('facts_produced', 0)) >= 1, data
+          assert int(data.get('temporal_items', 0)) >= 1, data
           PY
 
       - name: Prove structured profile enters MOM awareness
@@ -104,13 +99,13 @@ jobs:
           data=json.loads(os.environ['SNAP'])
           context=data.get('context','')
           assert data.get('ok') is True, data
-          assert int(data.get('fact_count',0)) >= 2, data
+          assert int(data.get('fact_count',0)) >= 1, data
           assert int(data.get('temporal_count',0)) >= 1, data
-          assert 'Tyler' in context, data
-          assert 'Deliver MOM beta' in context or 'MOM beta' in context, data
+          assert 'MOM beta' in context or 'beta' in context.lower(), data
           assert 'What you remember about your person' in context, data
           assert 'What you know is time-sensitive' in context, data
-          print('CLOSED LOOP CONTEXT VERIFIED')
+          assert 'Tyler' not in context, 'identity-bearing test data leaked into awareness'
+          print('CLOSED LOOP DEIDENTIFIED CONTEXT VERIFIED')
           PY
 
       - name: Prove Mother chat receives structured awareness
@@ -123,16 +118,17 @@ jobs:
             -H 'content-type: application/json' \
             -H "x-mom-installation: $INSTALLATION" \
             -H "x-mom-token: $TOKEN" \
-            -d '{"action":"chat","system_prompt":"You are MOM. Answer briefly.","history":[],"user_text":"What matters most right now?","knowledge_context":"","temperature":0,"max_history":2}' \
+            -d '{"action":"chat","system_prompt":"ignored-client-test","history":[],"user_text":"What matters most right now?","knowledge_context":"","temperature":0,"max_history":2}' \
             "$MOM_BRAIN_URL")"
           echo "$result"
           RESULT="$result" python3 - <<'PY'
           import json, os
           data=json.loads(os.environ['RESULT'])
-          assert int(data.get('profile_facts_used',0)) >= 2, data
+          assert int(data.get('profile_facts_used',0)) >= 1, data
           assert int(data.get('temporal_items_used',0)) >= 1, data
           assert isinstance(data.get('text'), str) and data['text'].strip(), data
-          print('MOTHER RECEIVED STRUCTURED AWARENESS')
+          assert 'deepseek' not in str(data.get('model','')).lower(), data
+          print('MOTHER RECEIVED STRUCTURED DEIDENTIFIED AWARENESS')
           PY
 
       - name: Prove silent agents can bypass Mother memory
@@ -145,7 +141,7 @@ jobs:
             -H 'content-type: application/json' \
             -H "x-mom-installation: $INSTALLATION" \
             -H "x-mom-token: $TOKEN" \
-            -d '{"action":"chat","system_prompt":"Return one word: OK","history":[],"user_text":"OK","knowledge_context":"","temperature":0,"max_history":2,"context_mode":"none"}' \
+            -d '{"action":"chat","system_prompt":"ignored-client-test","history":[],"user_text":"OK","knowledge_context":"","temperature":0,"max_history":2,"context_mode":"none"}' \
             "$MOM_BRAIN_URL")"
           echo "$result"
           RESULT="$result" python3 - <<'PY'
@@ -153,6 +149,7 @@ jobs:
           data=json.loads(os.environ['RESULT'])
           assert int(data.get('profile_facts_used',-1)) == 0, data
           assert int(data.get('temporal_items_used',-1)) == 0, data
+          assert 'deepseek' not in str(data.get('model','')).lower(), data
           print('INTERNAL AGENT CONTEXT ISOLATION VERIFIED')
           PY
 
