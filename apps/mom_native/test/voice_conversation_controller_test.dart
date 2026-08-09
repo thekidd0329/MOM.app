@@ -40,6 +40,15 @@ void main() {
       expect(controller.phase, MomVoiceConversationPhase.idle);
     });
 
+    test('recognizer done event cannot relisten after a final transcript', () {
+      final controller = MomVoiceConversationController();
+      controller.enable();
+      controller.markListening();
+      controller.markThinking();
+      expect(controller.listeningEndedWithoutTurn(), isFalse);
+      expect(controller.phase, MomVoiceConversationPhase.thinking);
+    });
+
     test('manual stop invalidates active voice loop', () {
       final controller = MomVoiceConversationController();
       final enabledGeneration = controller.enable();
