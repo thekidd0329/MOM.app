@@ -108,11 +108,30 @@ jobs:
       - name: Build release APK
         working-directory: ${{ runner.temp }}/mom_android
         run: flutter pub get && flutter build apk --release --target-platform android-arm64
+      - name: Inspect Android native packaging
+        run: |
+          set -euo pipefail
+          STAGED="$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+          APK="$RUNNER_TEMP/mom_android/build/app/outputs/flutter-apk/app-release.apk"
+          MANIFEST="$RUNNER_TEMP/mom_android/android/app/src/main/AndroidManifest.xml"
+          echo '=== STAGED ARM64 LIBRARIES ==='
+          find "$STAGED" -maxdepth 1 -type f -name 'lib*.so' -printf '%f\n' | sort
+          echo '=== APK ARM64 LIBRARIES ==='
+          APK="$APK" python3 - <<'PY'
+          import os
+          from zipfile import ZipFile
+          with ZipFile(os.environ['APK']) as z:
+              for name in sorted(n for n in z.namelist() if n.startswith('lib/arm64-v8a/')):
+                  print(name)
+          PY
+          echo '=== MANIFEST VOICE CONTRACT ==='
+          grep -E 'INTERNET|RECORD_AUDIO|RecognitionService' "$MANIFEST"
       - name: Verify permission, STT query, and Kokoro native runtime
         run: |
           python3 tools/verify_android_apk.py \
             "$RUNNER_TEMP/mom_android/build/app/outputs/flutter-apk/app-release.apk" \
-            "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+            "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a" \
+            "$RUNNER_TEMP/mom_android/android/app/src/main/AndroidManifest.xml"
       - uses: actions/upload-artifact@v4
         with:
           name: workload1-phase1-mom-android-apk
