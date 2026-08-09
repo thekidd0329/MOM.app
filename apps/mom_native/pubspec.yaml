@@ -1,7 +1,7 @@
 name: mom_native
 description: Native MOM client for Linux, Android, and iOS.
 publish_to: "none"
-version: 0.4.1+6
+version: 0.5.0+7
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -17,6 +17,13 @@ dependencies:
     sdk: flutter
   flutter_markdown: ^0.7.7+1
   http: ^1.2.2
+  audioplayers: ^6.1.0
+  speech_to_text: ^7.0.0
+  crispasr:
+    git:
+      url: https://github.com/CrispStrobe/CrispASR.git
+      ref: v0.8.25
+      path: flutter/crispasr
   shared_preferences: ^2.3.2
   flutter_secure_storage: ^9.2.2
   path_provider: ^2.1.4
