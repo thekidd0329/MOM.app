@@ -10,7 +10,6 @@ import 'privacy_filter.dart';
 
 class BrainReply {
   const BrainReply({required this.text, required this.model});
-
   final String text;
   final String model;
 }
@@ -44,10 +43,22 @@ class MomSyncClient {
   }
 
   String get brainUrl => _serviceUrl('mom-brain');
-
+  String get brainStreamUrl => _serviceUrl('mom-brain-stream');
   String get intelligenceUrl => _serviceUrl('mom-intelligence');
-
   String get loginUrl => _serviceUrl('mom-login');
+
+  Future<Map<String, String>> _authenticatedHeaders() async {
+    final installation = await _secure.read(key: _installationKey);
+    final token = await _secure.read(key: _tokenKey);
+    if (installation == null || token == null) {
+      throw StateError('MOM cloud installation is not registered.');
+    }
+    return {
+      'content-type': 'application/json',
+      'x-mom-installation': installation,
+      'x-mom-token': token,
+    };
+  }
 
   Future<Map<String, dynamic>> _post(
     Map<String, dynamic> payload, {
@@ -55,16 +66,9 @@ class MomSyncClient {
     Duration timeout = const Duration(seconds: 20),
     String? endpoint,
   }) async {
-    final headers = <String, String>{'content-type': 'application/json'};
-    if (authenticated) {
-      final installation = await _secure.read(key: _installationKey);
-      final token = await _secure.read(key: _tokenKey);
-      if (installation == null || token == null) {
-        throw StateError('MOM cloud installation is not registered.');
-      }
-      headers['x-mom-installation'] = installation;
-      headers['x-mom-token'] = token;
-    }
+    final headers = authenticated
+        ? await _authenticatedHeaders()
+        : <String, String>{'content-type': 'application/json'};
     final target = Uri.parse(endpoint ?? syncUrl);
     final response = await _http
         .post(target, headers: headers, body: jsonEncode(payload))
@@ -121,13 +125,11 @@ class MomSyncClient {
 
   Future<void> ensureRegistered({String appVersion = '0.4.0'}) async {
     if (await registered()) return;
-
     final inFlight = _registrationFlights[syncUrl];
     if (inFlight != null) {
       await inFlight;
       if (await registered()) return;
     }
-
     final registration = _register(appVersion: appVersion);
     _registrationFlights[syncUrl] = registration;
     try {
@@ -141,11 +143,9 @@ class MomSyncClient {
 
   Future<void> _register({required String appVersion}) async {
     if (await registered()) return;
-
     final prefs = await SharedPreferences.getInstance();
     var deviceId = prefs.getString(_deviceKey) ?? 'mom-${const Uuid().v4()}';
     await prefs.setString(_deviceKey, deviceId);
-
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final result = await _post({
@@ -181,20 +181,13 @@ class MomSyncClient {
 
   Future<Map<String, dynamic>> loginStatus() async {
     await ensureRegistered();
-    return _post(
-      {'action': 'status'},
-      authenticated: true,
-      endpoint: loginUrl,
-    );
+    return _post({'action': 'status'}, authenticated: true, endpoint: loginUrl);
   }
 
   Future<Map<String, dynamic>> createLoginTransferToken() async {
     await ensureRegistered();
     final result = await _post(
-      {
-        'action': 'create_transfer_token',
-        'privacy_acknowledged': true,
-      },
+      {'action': 'create_transfer_token', 'privacy_acknowledged': true},
       authenticated: true,
       endpoint: loginUrl,
     );
@@ -208,9 +201,7 @@ class MomSyncClient {
 
   Future<Map<String, dynamic>> redeemLoginTransferToken(String transferToken) async {
     final token = transferToken.trim();
-    if (token.isEmpty) {
-      throw const FormatException('Enter a MOM transfer code.');
-    }
+    if (token.isEmpty) throw const FormatException('Enter a MOM transfer code.');
     await ensureRegistered();
     final result = await _post(
       {
@@ -229,11 +220,7 @@ class MomSyncClient {
 
   Future<void> revokeLoginTransferTokens() async {
     await ensureRegistered();
-    await _post(
-      {'action': 'revoke_transfer_tokens'},
-      authenticated: true,
-      endpoint: loginUrl,
-    );
+    await _post({'action': 'revoke_transfer_tokens'}, authenticated: true, endpoint: loginUrl);
   }
 
   Future<List<String>> brainModels() async {
@@ -246,10 +233,7 @@ class MomSyncClient {
     );
     final raw = result['models'];
     if (raw is! List) return const [];
-    return raw
-        .whereType<String>()
-        .where((value) => value.trim().isNotEmpty)
-        .toList(growable: false);
+    return raw.whereType<String>().where((value) => value.trim().isNotEmpty).toList(growable: false);
   }
 
   Future<BrainReply> brainChat({
@@ -285,6 +269,67 @@ class MomSyncClient {
     return BrainReply(text: text.trim(), model: resolvedModel.trim());
   }
 
+  Future<BrainReply> brainChatStream({
+    required String systemPrompt,
+    required List<Map<String, String>> history,
+    required String userText,
+    required void Function(String delta) onDelta,
+    String model = '',
+    double temperature = 0.72,
+    int maxHistory = 30,
+  }) async {
+    await ensureRegistered();
+    final target = Uri.parse(brainStreamUrl);
+    final request = http.Request('POST', target)
+      ..headers.addAll(await _authenticatedHeaders())
+      ..body = jsonEncode({
+        'action': 'chat_stream',
+        'system_prompt': systemPrompt,
+        'history': history,
+        'user_text': userText,
+        'model': model,
+        'temperature': temperature,
+        'max_history': maxHistory,
+      });
+    final response = await _http.send(request).timeout(const Duration(seconds: 30));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final detail = await response.stream.bytesToString();
+      throw HttpException('MOM brain stream HTTP ${response.statusCode}: $detail', uri: target);
+    }
+
+    final text = StringBuffer();
+    var resolvedModel = model.trim();
+    final lines = response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .timeout(const Duration(minutes: 5));
+    await for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (!line.startsWith('data:')) continue;
+      final payload = line.substring(5).trim();
+      if (payload.isEmpty) continue;
+      if (payload == '[DONE]') break;
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) continue;
+      if (decoded['type'] == 'meta' && decoded['model'] is String) {
+        resolvedModel = (decoded['model'] as String).trim();
+      } else if (decoded['type'] == 'delta' && decoded['delta'] is String) {
+        final delta = decoded['delta'] as String;
+        if (delta.isNotEmpty) {
+          text.write(delta);
+          onDelta(delta);
+        }
+      } else if (decoded['type'] == 'error') {
+        throw HttpException('MOM brain stream failed: ${decoded['error'] ?? 'unknown'}', uri: target);
+      }
+    }
+    if (text.toString().trim().isEmpty) {
+      throw const FormatException('MOM brain stream returned no text.');
+    }
+    if (resolvedModel.isEmpty) resolvedModel = model.trim();
+    return BrainReply(text: text.toString().trim(), model: resolvedModel);
+  }
+
   Future<Map<String, dynamic>> intelligenceSnapshot() async {
     await ensureRegistered();
     return _post(
@@ -295,10 +340,6 @@ class MomSyncClient {
     );
   }
 
-  /// Raw chat is already persisted by ConversationStore on the device.
-  /// This compatibility method now sends only locally de-identified USER text
-  /// to the research/intelligence endpoint. Assistant turns never leave the
-  /// device through the sync path.
   Future<void> syncChat({
     required String sessionId,
     required String role,
@@ -308,10 +349,8 @@ class MomSyncClient {
     Map<String, dynamic> metadata = const {},
   }) async {
     if (role != 'user') return;
-
     final deidentified = MomPrivacyFilter.deidentify(content);
     if (!deidentified.isUseful) return;
-
     await ensureRegistered();
     await _post(
       {
@@ -342,8 +381,6 @@ class MomSyncClient {
     }, authenticated: true);
   }
 
-  /// Persistent raw memories are local-only. This intentionally performs no
-  /// cloud write; callers should use ConversationStore/local memory instead.
   Future<void> memory({
     required String content,
     String? sessionId,
@@ -353,8 +390,6 @@ class MomSyncClient {
     double confidence = 0.5,
   }) async {}
 
-  /// Cloud transcript history is disabled by design. Raw history is loaded
-  /// from ConversationStore on-device.
   Future<Map<String, dynamic>> history({int limit = 100}) async => const {
         'sessions': <dynamic>[],
         'messages': <dynamic>[],
