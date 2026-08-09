@@ -6,6 +6,9 @@ import 'package:mom_native/src/mom_home_screen.dart';
 void main() {
   testWidgets('MOM home launches with the trademark electric orb',
       (tester) async {
+    await tester.binding.setSurfaceSize(const Size(430, 932));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -40,7 +43,7 @@ void main() {
         (paint) => paint.painter?.runtimeType.toString() == '_ElectricOrbPainter',
       ),
       isTrue,
-      reason: 'The trademark MOM electric orb painter must remain on the home surface.',
+      reason: 'The trademark MOM electric orb painter must remain on the phone home surface.',
     );
   });
 }
