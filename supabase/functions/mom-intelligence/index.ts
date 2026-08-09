@@ -43,7 +43,6 @@ async function authenticate(req: Request) {
   const id = req.headers.get("x-mom-installation") ?? "";
   const token = req.headers.get("x-mom-token") ?? "";
   if (!isUuid(id) || token.length < 32 || token.length > 256) return null;
-
   const { data, error } = await db
     .from("mom_installations")
     .select("id,device_id,token_hash,revoked_at")
@@ -60,13 +59,11 @@ function parseJsonObject(value: unknown) {
   const last = text.lastIndexOf("}");
   if (first >= 0 && last > first) text = text.slice(first, last + 1);
   const parsed = JSON.parse(text);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("invalid_json_output");
-  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_json_output");
   return parsed as Record<string, unknown>;
 }
 
-async function askBrain(req: Request, systemPrompt: string, userPrompt: string) {
+async function askBrain(req: Request, agentMode: "context_extractor" | "temporal", userPrompt: string) {
   const started = Date.now();
   const response = await fetch(BRAIN_URL, {
     method: "POST",
@@ -76,24 +73,16 @@ async function askBrain(req: Request, systemPrompt: string, userPrompt: string) 
       "x-mom-token": req.headers.get("x-mom-token") ?? "",
     },
     body: JSON.stringify({
-      action: "chat",
-      system_prompt: systemPrompt,
-      history: [],
+      action: "agent",
+      agent_mode: agentMode,
       user_text: userPrompt,
-      knowledge_context: "",
-      model: "",
-      temperature: 0,
-      max_history: 2,
-      context_mode: "none",
     }),
   });
 
   const rawBody = await response.text();
   let body: any = {};
   try { body = rawBody ? JSON.parse(rawBody) : {}; } catch {}
-  if (!response.ok) {
-    throw new Error(`brain_${response.status}:${safeText(body?.error ?? rawBody, 300)}`);
-  }
+  if (!response.ok) throw new Error(`brain_${response.status}:${safeText(body?.error ?? rawBody, 300)}`);
   const raw = safeText(body?.text, 12000);
   if (!raw) throw new Error("empty_model_output");
   return {
@@ -118,8 +107,7 @@ function containsObviousIdentifier(value: string) {
 }
 
 function scrub(value: string) {
-  let text = safeText(value, 800);
-  text = text
+  return safeText(value, 800)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[EMAIL]")
     .replace(/https?:\/\/\S+|www\.\S+/gi, "[URL]")
     .replace(/(?<!\w)@[A-Za-z0-9_]{2,32}\b/g, "[HANDLE]")
@@ -129,8 +117,8 @@ function scrub(value: string) {
     .replace(
       /\b((?:my\s+)?(?:mom|mother|dad|father|parent|sister|brother|daughter|son|friend|girlfriend|boyfriend|wife|husband|partner|boss|manager|coworker|doctor|teacher|caseworker|lawyer|attorney|officer|detective|pastor|senator|representative|mayor|governor)\s+)([A-Z][a-z]{1,30})(?:\s+[A-Z][a-z]{1,30})?\b/gi,
       "$1[PERSON]",
-    );
-  return text.trim();
+    )
+    .trim();
 }
 
 function stringArray(value: unknown, maxItems = 12) {
@@ -145,41 +133,6 @@ function stringArray(value: unknown, maxItems = 12) {
 function normalizeFact(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 220);
 }
-
-const extractorPrompt = `You are MOM's privacy-preserving silent data extraction parser.
-
-The input has already been de-identified on the user's device. Do not reconstruct, infer, guess, or preserve identities. Generalize any remaining named person, organization, precise location, username, address, phone, email, account number, or other direct identifier.
-
-Output ONLY valid JSON exactly as:
-{"core_emotions":[],"vulnerabilities":[],"life_details":[],"implicit_needs":[]}
-
-Rules:
-1. Do not guess. Extract only information supported by the supplied de-identified text.
-2. If no new data exists for a category, use [].
-3. Keep each item concise and atomic.
-4. Do not turn temporary states into permanent traits.
-5. Never output proper names, exact addresses, usernames, account identifiers, phone numbers, email addresses, URLs, or exact coordinates.
-6. Generalize public figures and organizations by role/category, for example "public official", "employer", "school", or "medical provider".
-7. life_details may include generalized relationships, routines, preferences, projects, commitments, possessions, and broad context, but not identity-bearing details.
-8. implicit_needs is the conservative immediate thing sought from MOM, such as validation, reassurance, information, problem-solving, planning, emotional support, or venting.
-9. No prose or markdown.`;
-
-const temporalPrompt = `You are MOM's privacy-preserving temporal/executive parser.
-
-Output ONLY valid JSON exactly as:
-{"items":[]}
-
-Each item may contain:
-{"kind":"task|reminder|deadline|appointment|follow_up|event","title":"short generalized title","detail":"optional generalized detail","due_at":"ISO-8601 or null","time_text":"original de-identified wording or null","urgency":0.0,"importance":0.0}
-
-Rules:
-1. Never invent dates, tasks, reminders, appointments, deadlines, or commitments.
-2. Never output names or identity-bearing details.
-3. Keep titles and details generalized.
-4. If time is ambiguous, preserve de-identified time_text and use null due_at.
-5. urgency is how soon action is needed; importance is how consequential it appears.
-6. Empty array if none.
-7. No prose or markdown.`;
 
 function temporalLikely(text: string) {
   return /\b(today|tonight|tomorrow|yesterday|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|hour|minute|am|pm|deadline|due|appointment|remind|remember to|need to|have to|gotta|must|before|after|by \d|at \d|in \d)\b/i.test(text);
@@ -198,34 +151,25 @@ async function processDeidentified(req: Request, installation: any, body: any) {
 
   const text = safeText(body.sanitized_text, 12000);
   if (!text) return json(400, { error: "empty_sanitized_text" });
-  if (containsObviousIdentifier(text)) {
-    return json(422, { error: "client_deidentification_failed" });
-  }
+  if (containsObviousIdentifier(text)) return json(422, { error: "client_deidentification_failed" });
 
-  const originalCharactersRaw = Number(body.original_characters ?? text.length);
-  const originalCharacters = Number.isFinite(originalCharactersRaw)
-    ? Math.max(text.length, Math.min(200000, Math.trunc(originalCharactersRaw)))
+  const originalRaw = Number(body.original_characters ?? text.length);
+  const originalCharacters = Number.isFinite(originalRaw)
+    ? Math.max(text.length, Math.min(200000, Math.trunc(originalRaw)))
     : text.length;
   const redactionRaw = Number(body.redaction_count ?? 0);
   const redactionCount = Number.isFinite(redactionRaw)
     ? Math.max(0, Math.min(1000, Math.trunc(redactionRaw)))
     : 0;
 
-  const extractionRun = await askBrain(
-    req,
-    extractorPrompt,
-    `DE-IDENTIFIED USER MESSAGE:\n${text}`,
-  );
-
+  const extractionRun = await askBrain(req, "context_extractor", `DE-IDENTIFIED USER MESSAGE:\n${text}`);
   const extraction: Record<string, string[]> = {
     core_emotions: stringArray((extractionRun.data as any).core_emotions),
     vulnerabilities: stringArray((extractionRun.data as any).vulnerabilities),
     life_details: stringArray((extractionRun.data as any).life_details),
     implicit_needs: stringArray((extractionRun.data as any).implicit_needs),
   };
-
-  const serializedExtraction = JSON.stringify(extraction);
-  if (containsObviousIdentifier(serializedExtraction)) {
+  if (containsObviousIdentifier(JSON.stringify(extraction))) {
     return json(422, { error: "model_deidentification_failed" });
   }
 
@@ -268,11 +212,7 @@ async function processDeidentified(req: Request, installation: any, body: any) {
 
   const temporalItems: any[] = [];
   if (temporalLikely(text)) {
-    const temporalRun = await askBrain(
-      req,
-      temporalPrompt,
-      `DE-IDENTIFIED USER MESSAGE:\n${text}`,
-    );
+    const temporalRun = await askBrain(req, "temporal", `DE-IDENTIFIED USER MESSAGE:\n${text}`);
     const rawItems = Array.isArray((temporalRun.data as any).items)
       ? (temporalRun.data as any).items.slice(0, 8)
       : [];
@@ -280,27 +220,21 @@ async function processDeidentified(req: Request, installation: any, body: any) {
     for (const raw of rawItems) {
       const kind = safeText(raw?.kind, 20);
       const title = scrub(safeText(raw?.title, 300));
-      if (!title || !["task", "reminder", "deadline", "appointment", "follow_up", "event"].includes(kind)) continue;
       const detail = scrub(safeText(raw?.detail, 1000));
       const timeText = scrub(safeText(raw?.time_text, 200));
+      if (!title || !["task", "reminder", "deadline", "appointment", "follow_up", "event"].includes(kind)) continue;
       if (containsObviousIdentifier(`${title} ${detail} ${timeText}`)) continue;
-
-      const urgency = Math.max(0, Math.min(1, Number(raw?.urgency ?? 0.5) || 0.5));
-      const importance = Math.max(0, Math.min(1, Number(raw?.importance ?? 0.5) || 0.5));
       const dueText = safeText(raw?.due_at, 80);
-      const dueAt = dueText && !Number.isNaN(Date.parse(dueText))
-        ? new Date(dueText).toISOString()
-        : null;
+      const dueAt = dueText && !Number.isNaN(Date.parse(dueText)) ? new Date(dueText).toISOString() : null;
       const item = {
         kind,
         title,
         detail: detail || null,
         due_at: dueAt,
         time_text: timeText || null,
-        urgency,
-        importance,
+        urgency: Math.max(0, Math.min(1, Number(raw?.urgency ?? 0.5) || 0.5)),
+        importance: Math.max(0, Math.min(1, Number(raw?.importance ?? 0.5) || 0.5)),
       };
-
       const { error } = await db.from("mom_temporal_items").insert({
         device_id: installation.device_id,
         session_id: null,
@@ -312,7 +246,7 @@ async function processDeidentified(req: Request, installation: any, body: any) {
       temporalItems.push(item);
     }
 
-    const { error } = await db.from("mom_agent_runs").insert({
+    const { error: runError } = await db.from("mom_agent_runs").insert({
       device_id: installation.device_id,
       session_id: null,
       agent: "temporal_deidentified",
@@ -324,7 +258,7 @@ async function processDeidentified(req: Request, installation: any, body: any) {
       latency_ms: temporalRun.latencyMs,
       metadata: { privacy_version: "deid-v1" },
     });
-    if (error) throw new Error(`temporal_run_insert:${safeError(error)}`);
+    if (runError) throw new Error(`temporal_run_insert:${safeError(runError)}`);
   }
 
   const { error: extractorRunError } = await db.from("mom_agent_runs").insert({
@@ -341,10 +275,8 @@ async function processDeidentified(req: Request, installation: any, body: any) {
   });
   if (extractorRunError) throw new Error(`extractor_run_insert:${safeError(extractorRunError)}`);
 
-  // The research copy is deliberately detached: no device, user, session, raw
-  // text, source excerpt, or extraction-row identifier is written with it.
   if (!String(installation.device_id).startsWith("mom-ci-")) {
-    const { error: researchError } = await db.from("mom_research_corpus").insert({
+    const { error } = await db.from("mom_research_corpus").insert({
       extraction,
       model: extractionRun.model,
       input_characters: originalCharacters,
@@ -354,27 +286,21 @@ async function processDeidentified(req: Request, installation: any, body: any) {
       privacy_version: "deid-v1",
       redaction_count: redactionCount,
     });
-    if (researchError) throw new Error(`research_insert:${safeError(researchError)}`);
+    if (error) throw new Error(`research_insert:${safeError(error)}`);
   }
 
-  const dataPoints = factsProduced + temporalItems.length;
   return json(200, {
     ok: true,
     facts_produced: factsProduced,
     temporal_items: temporalItems.length,
-    data_points: dataPoints,
+    data_points: factsProduced + temporalItems.length,
     redactions: redactionCount,
     privacy_version: "deid-v1",
   });
 }
 
 async function snapshot(installation: any) {
-  const [
-    { count: facts },
-    { count: extractions },
-    { count: temporal },
-    { data: runs },
-  ] = await Promise.all([
+  const [{ count: facts }, { count: extractions }, { count: temporal }, { data: runs }] = await Promise.all([
     db.from("mom_profile_facts").select("*", { count: "exact", head: true }).eq("device_id", installation.device_id),
     db.from("mom_context_extractions").select("*", { count: "exact", head: true }).eq("device_id", installation.device_id),
     db.from("mom_temporal_items").select("*", { count: "exact", head: true }).eq("device_id", installation.device_id),
@@ -385,16 +311,11 @@ async function snapshot(installation: any) {
       .order("created_at", { ascending: false })
       .limit(100),
   ]);
-
   const userChars = (runs ?? [])
-    .filter((row: any) => Number(row.facts_produced ?? 0) > 0)
-    .reduce((sum: number, row: any) => sum + Number(row.input_characters ?? 0), 0);
-  const uniquePoints = Number(facts ?? 0) + Number(temporal ?? 0);
-  const latencyRows = (runs ?? []).filter((row: any) => Number.isFinite(row.latency_ms));
-  const averageLatency = latencyRows.length
-    ? Math.round(latencyRows.reduce((sum: number, row: any) => sum + Number(row.latency_ms), 0) / latencyRows.length)
-    : null;
-
+    .filter((run: any) => Number(run.facts_produced ?? 0) > 0)
+    .reduce((sum: number, run: any) => sum + Number(run.input_characters ?? 0), 0);
+  const unique = Number(facts ?? 0) + Number(temporal ?? 0);
+  const latencyRows = (runs ?? []).filter((run: any) => Number.isFinite(run.latency_ms));
   return json(200, {
     ok: true,
     privacy_version: "deid-v1",
@@ -403,10 +324,12 @@ async function snapshot(installation: any) {
       profile_facts: facts ?? 0,
       extractions: extractions ?? 0,
       temporal_items: temporal ?? 0,
-      unique_data_points: uniquePoints,
+      unique_data_points: unique,
       user_input_characters: userChars,
-      data_points_per_1000_user_chars: Number(((uniquePoints * 1000) / Math.max(1, userChars)).toFixed(2)),
-      average_agent_latency_ms: averageLatency,
+      data_points_per_1000_user_chars: Number(((unique * 1000) / Math.max(1, userChars)).toFixed(2)),
+      average_agent_latency_ms: latencyRows.length
+        ? Math.round(latencyRows.reduce((sum: number, run: any) => sum + Number(run.latency_ms), 0) / latencyRows.length)
+        : null,
     },
     latest_facts: [],
     open_temporal_items: [],
@@ -414,12 +337,10 @@ async function snapshot(installation: any) {
 }
 
 async function cleanupTest(installation: any) {
-  if (!String(installation.device_id).startsWith("mom-ci-")) {
-    return json(403, { error: "test_cleanup_forbidden" });
-  }
+  if (!String(installation.device_id).startsWith("mom-ci-")) return json(403, { error: "test_cleanup_forbidden" });
   for (const table of ["mom_agent_runs", "mom_temporal_items", "mom_profile_facts", "mom_context_extractions"]) {
     const { error } = await db.from(table).delete().eq("device_id", installation.device_id);
-    if (error) throw new Error(`cleanup_${table}:${safeError(error)}`);
+    if (error) throw error;
   }
   return json(200, { ok: true });
 }
@@ -427,11 +348,10 @@ async function cleanupTest(installation: any) {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
-
   let body: any;
   try { body = await req.json(); } catch { return json(400, { error: "invalid_json" }); }
-  const action = safeText(body?.action, 40);
 
+  const action = safeText(body?.action, 40);
   if (action === "health") {
     const brain = await fetch(BRAIN_URL, {
       method: "POST",
@@ -443,12 +363,13 @@ Deno.serve(async (req: Request) => {
     return json(200, {
       ok: true,
       service: "mom-intelligence",
-      version: 7,
+      version: 8,
       configured: brain.ok && data?.configured === true,
       privacy_version: "deid-v1",
       raw_text_accepted: false,
       detached_research_corpus: true,
       content_preview_available: false,
+      bounded_brain_agents: true,
     });
   }
 
@@ -462,8 +383,7 @@ Deno.serve(async (req: Request) => {
     if (action === "process") return json(410, { error: "raw_extraction_disabled" });
     return json(400, { error: "unknown_action" });
   } catch (error) {
-    const detail = safeError(error);
-    console.error("mom-intelligence", action, detail);
-    return json(500, { error: "server_error", detail });
+    console.error("mom-intelligence", action, safeError(error));
+    return json(500, { error: "server_error" });
   }
 });
