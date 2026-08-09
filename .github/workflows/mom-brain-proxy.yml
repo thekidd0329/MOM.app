@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/mom_native/**"
+      - "supabase/functions/mom-brain/**"
       - ".github/workflows/mom-brain-proxy.yml"
   workflow_dispatch:
 
@@ -20,6 +21,20 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Verify server-owned model authority
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('supabase/functions/mom-brain/index.ts').read_text()
+          assert 'function isForbiddenModel' in source, 'missing forbidden-model gate'
+          assert 'model.toLowerCase().includes("deepseek")' in source, 'DeepSeek family is not explicitly forbidden'
+          assert 'mom-brain ignored client model override' in source, 'client model override is not explicitly ignored'
+          assert 'const model = await resolveModel();' in source, 'chat path is not using server-side model resolution'
+          assert 'const requestedModel = safeText(body.model' not in source, 'client model authority was reintroduced'
+          assert 'failspy/Smaug-Llama-3-70B-Instruct-abliterated-v3' in source, 'preferred MOM model is missing'
+          print('MOM server-owned model authority contract OK')
+          PY
 
       - name: Build repository knowledge bundle
         run: python3 tools/build_mom_knowledge.py
@@ -95,7 +110,7 @@ jobs:
           data = json.loads(os.environ['MODELS'])
           models = data.get('models') or []
           assert models, data
-          print(models[0])
+          print(data.get('default_model') or models[0])
           PY
           )"
           echo "MOM brain model discovery OK: $model"
@@ -104,7 +119,7 @@ jobs:
           import json, os
           print(json.dumps({
               'action': 'chat',
-              'system_prompt': 'You are a connectivity test. Give a very short reply.',
+              'system_prompt': 'This is a transport health probe. Reply with one very short acknowledgement.',
               'history': [],
               'user_text': 'Reply with MOM_SERVER_OK.',
               'context_mode': 'none',
