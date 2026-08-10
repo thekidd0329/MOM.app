@@ -32,13 +32,19 @@ void main() {
     });
 
     test('transcript reaches MOM brain and response remains captioned', () {
-      expect(appSource, contains('final reply = await client.chat('));
+      expect(appSource, contains('streamedReply = await streamClient.chat('));
+      expect(appSource, contains('reply = await client.chat('));
       expect(appSource, contains('userText: text.trim()'));
+      expect(
+        appSource,
+        contains("'brain_transport': useLocal ? 'local_complete' : 'secure_sse'"),
+      );
       expect(appSource, contains("'caption_persists': true"));
     });
 
     test('brain reply reaches Kokoro synthesis', () {
       expect(appSource, contains('await _speakText(reply.text)'));
+      expect(appSource, contains('speechFuture = _speakDeltaStream(deltaController.stream)'));
       expect(voiceSource, contains("backend: 'kokoro'"));
       expect(voiceSource, contains('session.setVoice(request.voicePath)'));
       expect(voiceSource, contains('session.synthesize(request.text)'));
