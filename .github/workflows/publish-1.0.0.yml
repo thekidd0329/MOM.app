@@ -50,3 +50,27 @@ jobs:
               --title 'MOM 1.0.0' \
               --notes $'First public MOM Android baseline.\n\nText conversation remains available in this release. Voice output is not part of the verified 1.0.0 baseline and is being brought into the 1.0.1 UI + voice update.'
           fi
+
+      - name: Record verified publish marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_URL="$(gh release view v1.0.0 --repo thekidd0329/MOM.app --json url --jq .url)"
+          mkdir -p builds
+          cat > builds/release-1.0.0-published.json <<EOF
+          {
+            "published": true,
+            "tag": "v1.0.0",
+            "version": "1.0.0+8",
+            "source_commit": "4ce0951a58d3e8097afe58001400f39c8fb4b268",
+            "artifact_run": 31344355788,
+            "asset": "MOM-1.0.0.apk",
+            "release_url": "$RELEASE_URL"
+          }
+          EOF
+          git config user.name 'MOM Release Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add builds/release-1.0.0-published.json
+          git commit -m 'Record MOM 1.0.0 public release'
+          git push origin HEAD:release/1.0.0-publish
