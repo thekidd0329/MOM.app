@@ -1,0 +1,52 @@
+name: Publish MOM 1.0.0
+
+on:
+  push:
+    branches:
+      - release/1.0.0-publish
+    paths:
+      - ".github/workflows/publish-1.0.0.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download frozen 1.0.0 APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mom-release"
+          gh run download 31344355788 \
+            --repo thekidd0329/MOM.app \
+            --name 'mom-android-debug-1.0.0+8-4ce0951' \
+            --dir "$RUNNER_TEMP/mom-release"
+          APK="$(find "$RUNNER_TEMP/mom-release" -type f -name '*.apk' -print -quit)"
+          test -s "$APK"
+          cp "$APK" "$RUNNER_TEMP/MOM-1.0.0.apk"
+          sha256sum "$RUNNER_TEMP/MOM-1.0.0.apk"
+
+      - name: Publish public GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v1.0.0 --repo thekidd0329/MOM.app >/dev/null 2>&1; then
+            echo 'v1.0.0 already exists; replacing APK asset only.'
+            gh release upload v1.0.0 "$RUNNER_TEMP/MOM-1.0.0.apk#MOM-1.0.0.apk" \
+              --repo thekidd0329/MOM.app \
+              --clobber
+          else
+            gh release create v1.0.0 \
+              "$RUNNER_TEMP/MOM-1.0.0.apk#MOM-1.0.0.apk" \
+              --repo thekidd0329/MOM.app \
+              --target 4ce0951a58d3e8097afe58001400f39c8fb4b268 \
+              --title 'MOM 1.0.0' \
+              --notes $'First public MOM Android baseline.\n\nText conversation remains available in this release. Voice output is not part of the verified 1.0.0 baseline and is being brought into the 1.0.1 UI + voice update.'
+          fi
