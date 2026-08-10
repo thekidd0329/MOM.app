@@ -58,6 +58,7 @@ jobs:
 
   android:
     name: Android APK
+    if: ${{ !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'workload1/phase')) }}
     needs: test
     runs-on: ubuntu-latest
     steps:

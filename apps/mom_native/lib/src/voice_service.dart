@@ -9,6 +9,10 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'speech_chunker.dart';
+import 'voice_conversation_controller.dart';
+import 'voice_playback_state.dart';
+
 const _modelName = 'kokoro-82m-q8_0.gguf';
 const _voiceName = 'kokoro-voice-af_heart.gguf';
 const _modelUrl =
@@ -19,24 +23,50 @@ const _voiceUrl =
 class MomVoiceService {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
+  final MomVoiceConversationController _conversation =
+      MomVoiceConversationController();
+  final StreamController<MomVoicePlaybackState> _playbackStates =
+      StreamController<MomVoicePlaybackState>.broadcast(sync: true);
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
   int _speechGeneration = 0;
   File? _playingFile;
   void Function(bool listening)? _listeningState;
+  void Function(String text)? _finalTranscript;
+  MomVoicePlaybackState _playbackState = const MomVoicePlaybackState.idle();
+
   bool get listening => _speech.isListening;
+  bool get handsFreeActive => _conversation.active;
+  MomVoiceConversationPhase get conversationPhase => _conversation.phase;
+  MomVoicePlaybackState get playbackState => _playbackState;
+  Stream<MomVoicePlaybackState> get playbackStates => _playbackStates.stream;
+
+  void _emitPlayback(MomVoicePlaybackState state) {
+    _playbackState = state;
+    if (!_playbackStates.isClosed) _playbackStates.add(state);
+  }
 
   Future<bool> initialize() async {
     _speechReady = await _speech.initialize(
       onStatus: (status) {
         if (status == 'listening') {
           _listeningState?.call(true);
-        } else if (status == 'notListening' || status == 'done') {
+          return;
+        }
+        if (status == 'notListening' || status == 'done') {
           _listeningState?.call(false);
+          if (_conversation.listeningEndedWithoutTurn()) {
+            _scheduleSilentRelisten();
+          }
         }
       },
-      onError: (_) => _listeningState?.call(false),
+      onError: (_) {
+        _listeningState?.call(false);
+        if (_conversation.listeningEndedWithoutTurn()) {
+          _scheduleSilentRelisten();
+        }
+      },
     );
     unawaited(_warmVoiceAssets());
     return _speechReady;
@@ -80,14 +110,28 @@ class MomVoiceService {
     required void Function(String text) onFinal,
     required void Function(bool listening) onState,
   }) async {
-    if (!_speechReady) await initialize();
-    _listeningState = onState;
-    if (!_speechReady) {
-      onState(false);
+    if (_conversation.active) {
+      await stopListening();
       return;
     }
 
-    onState(true);
+    _listeningState = onState;
+    _finalTranscript = onFinal;
+    _conversation.enable();
+    await _startListeningCycle();
+  }
+
+  Future<void> _startListeningCycle() async {
+    if (!_conversation.canListen(busy: false)) return;
+    if (!_speechReady) await initialize();
+    if (!_speechReady || !_conversation.active) {
+      _conversation.fail();
+      _listeningState?.call(false);
+      return;
+    }
+
+    _conversation.markListening();
+    _listeningState?.call(true);
     try {
       await _speech.listen(
         listenOptions: SpeechListenOptions(
@@ -95,70 +139,129 @@ class MomVoiceService {
           cancelOnError: true,
         ),
         onResult: (result) {
-          if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
-            onFinal(result.recognizedWords.trim());
-            onState(false);
+          final text = result.recognizedWords.trim();
+          if (!result.finalResult || text.isEmpty || !_conversation.active) {
+            return;
           }
+          _conversation.markThinking();
+          _finalTranscript?.call(text);
+          _listeningState?.call(false);
         },
       );
-      if (!_speech.isListening) onState(false);
+      if (!_speech.isListening &&
+          _conversation.listeningEndedWithoutTurn()) {
+        _listeningState?.call(false);
+        _scheduleSilentRelisten();
+      }
     } catch (_) {
-      onState(false);
-      rethrow;
+      _listeningState?.call(false);
+      if (_conversation.listeningEndedWithoutTurn()) {
+        _scheduleSilentRelisten();
+      } else {
+        rethrow;
+      }
     }
+  }
+
+  void _scheduleSilentRelisten() {
+    final generation = _conversation.generation;
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 250), () async {
+      if (!_conversation.active || generation != _conversation.generation) {
+        return;
+      }
+      if (!_conversation.canListen(busy: false)) return;
+      try {
+        await _startListeningCycle();
+      } catch (_) {
+        _conversation.fail();
+        _listeningState?.call(false);
+      }
+    }));
   }
 
   Future<void> stopListening() async {
+    _conversation.disable();
     await _speech.stop();
     _listeningState?.call(false);
     _listeningState = null;
+    _finalTranscript = null;
   }
 
   Future<void> speak(String text) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    final chunks = splitSpeechChunks(text);
+    if (chunks.isEmpty) return;
+
+    final shouldResumeHandsFree = _conversation.active;
+    if (shouldResumeHandsFree) {
+      _conversation.markSpeaking();
+      await _speech.stop();
+      _listeningState?.call(false);
+    }
 
     final generation = ++_speechGeneration;
-    final assets = await _prepareVoiceAssets();
-    if (generation != _speechGeneration) return;
+    try {
+      final assets = await _prepareVoiceAssets();
+      if (generation != _speechGeneration) return;
 
-    final request = _SynthesisRequest(
-      modelPath: assets.model.path,
-      voicePath: assets.voice.path,
-      text: trimmed,
-    );
-    final wav = await Isolate.run(() => _synthesize(request));
-    if (generation != _speechGeneration) return;
-
-    final output =
-        File('${assets.directory.path}/mom-response-$generation.wav');
-    await output.writeAsBytes(wav, flush: true);
-    if (generation != _speechGeneration) {
-      if (await output.exists()) await output.delete();
-      return;
-    }
-
-    await _player.stop();
-    final previous = _playingFile;
-    if (previous != null && await previous.exists()) {
-      await previous.delete();
-    }
-    if (generation != _speechGeneration) {
-      if (await output.exists()) await output.delete();
-      return;
-    }
-
-    final completed = _player.onPlayerComplete.first;
-    await _player.play(DeviceFileSource(output.path));
-    _playingFile = output;
-    await completed.timeout(
-      const Duration(minutes: 2),
-      onTimeout: () {},
-    );
-
-    if (generation == _speechGeneration && await output.exists()) {
-      await output.delete();
+      await _player.stop();
+      final previous = _playingFile;
+      if (previous != null && await previous.exists()) {
+        await previous.delete();
+      }
       _playingFile = null;
+
+      for (var index = 0; index < chunks.length; index++) {
+        if (generation != _speechGeneration) return;
+        _emitPlayback(MomVoicePlaybackState(
+          phase: MomVoicePlaybackPhase.preparing,
+          chunkIndex: index,
+          chunkCount: chunks.length,
+        ));
+
+        final request = _SynthesisRequest(
+          modelPath: assets.model.path,
+          voicePath: assets.voice.path,
+          text: chunks[index],
+        );
+        final wav = await Isolate.run(() => _synthesize(request));
+        if (generation != _speechGeneration) return;
+
+        final output = File(
+          '${assets.directory.path}/mom-response-$generation-$index.wav',
+        );
+        await output.writeAsBytes(wav, flush: true);
+        if (generation != _speechGeneration) {
+          if (await output.exists()) await output.delete();
+          return;
+        }
+
+        final completed = _player.onPlayerComplete.first;
+        _emitPlayback(MomVoicePlaybackState(
+          phase: MomVoicePlaybackPhase.speaking,
+          chunkIndex: index,
+          chunkCount: chunks.length,
+        ));
+        await _player.play(DeviceFileSource(output.path));
+        _playingFile = output;
+        await completed.timeout(
+          const Duration(minutes: 2),
+          onTimeout: () {},
+        );
+
+        if (await output.exists()) await output.delete();
+        if (identical(_playingFile, output)) _playingFile = null;
+      }
+    } finally {
+      _emitPlayback(const MomVoicePlaybackState.idle());
+      if (shouldResumeHandsFree && _conversation.active) {
+        _conversation.finishTurn();
+        try {
+          await _startListeningCycle();
+        } catch (_) {
+          _conversation.fail();
+          _listeningState?.call(false);
+        }
+      }
     }
   }
 
@@ -204,11 +307,15 @@ class MomVoiceService {
   }
 
   Future<void> dispose() async {
+    _conversation.disable();
     _speechGeneration++;
     _listeningState?.call(false);
     _listeningState = null;
+    _finalTranscript = null;
     await _speech.stop();
     await _player.stop();
+    _emitPlayback(const MomVoicePlaybackState.idle());
+    await _playbackStates.close();
     await _player.dispose();
     final playing = _playingFile;
     if (playing != null && await playing.exists()) {
