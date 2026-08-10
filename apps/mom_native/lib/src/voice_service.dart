@@ -63,6 +63,8 @@ class MomVoiceService {
   File? _playingFile;
   Completer<void>? _playbackCancelled;
   void Function(bool listening)? _listeningState;
+  void Function(String text)? _conversationFinal;
+  void Function(bool listening)? _conversationListeningState;
   void Function(Object error)? _bargeInError;
   MomVoiceException? _lastFailure;
   bool _bargeInDetected = false;
@@ -154,6 +156,8 @@ class MomVoiceService {
   }) async {
     await stopBargeInDetection();
     if (!_speechReady) await initialize();
+    _conversationFinal = onFinal;
+    _conversationListeningState = onState;
     _listeningState = onState;
     if (!_speechReady) {
       onState(false);
@@ -236,6 +240,33 @@ class MomVoiceService {
     }
   }
 
+  Future<void> _armAutomaticBargeIn(String Function() expectedMomSpeech) async {
+    final finalHandler = _conversationFinal;
+    final stateHandler = _conversationListeningState;
+    if (finalHandler == null || stateHandler == null || !_speechReady) return;
+
+    await listenForBargeIn(
+      expectedMomSpeech: expectedMomSpeech,
+      onDetected: (_) {
+        unawaited(() async {
+          await stopSpeaking();
+          await Future<void>.delayed(Duration.zero);
+          stateHandler(true);
+        }());
+      },
+      onFinal: (text) {
+        if (text.trim().isEmpty) return;
+        _bargeInError = null;
+        _listeningState = stateHandler;
+        stateHandler(false);
+        finalHandler(text.trim());
+      },
+      onError: (error) {
+        _lastFailure = MomVoiceException('barge_in_stt', error);
+      },
+    );
+  }
+
   Future<void> stopBargeInDetection() async {
     _bargeInGeneration++;
     _bargeInDetected = false;
@@ -310,9 +341,15 @@ class MomVoiceService {
         assets: assets,
         generation: generation,
         index: index,
-        onPlaybackStart: index == 0 ? onPlaybackStart : null,
+        onPlaybackStart: index == 0
+            ? () {
+                onPlaybackStart?.call();
+                unawaited(_armAutomaticBargeIn(() => text));
+              }
+            : null,
       );
     }
+    if (generation == _speechGeneration) await stopBargeInDetection();
     _lastFailure = null;
   }
 
@@ -327,6 +364,7 @@ class MomVoiceService {
 
     await _preparePlayerForGeneration();
     final assembler = MomStreamingTtsAssembler(chunker: _chunker);
+    final expectedSpeech = StringBuffer();
     var index = 0;
     var synthesisStarted = false;
 
@@ -343,7 +381,14 @@ class MomVoiceService {
         assets: assets,
         generation: generation,
         index: index,
-        onPlaybackStart: index == 0 ? onPlaybackStart : null,
+        onPlaybackStart: index == 0
+            ? () {
+                onPlaybackStart?.call();
+                unawaited(
+                  _armAutomaticBargeIn(() => expectedSpeech.toString()),
+                );
+              }
+            : null,
       );
       index++;
     }
@@ -351,6 +396,7 @@ class MomVoiceService {
     try {
       await for (final delta in deltas) {
         if (generation != _speechGeneration) return;
+        expectedSpeech.write(delta);
         for (final chunk in assembler.add(delta)) {
           await speakChunk(chunk);
         }
@@ -358,6 +404,7 @@ class MomVoiceService {
       for (final chunk in assembler.close()) {
         await speakChunk(chunk);
       }
+      if (generation == _speechGeneration) await stopBargeInDetection();
       _lastFailure = null;
     } catch (error) {
       final failure = error is MomVoiceException
@@ -504,6 +551,8 @@ class MomVoiceService {
     }
     _listeningState?.call(false);
     _listeningState = null;
+    _conversationFinal = null;
+    _conversationListeningState = null;
     _bargeInError = null;
     await _speech.stop();
     await _player.stop();
