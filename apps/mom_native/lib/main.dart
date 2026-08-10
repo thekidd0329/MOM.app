@@ -100,6 +100,7 @@ class _MomAppState extends State<MomApp> {
   }
 
   Future<void> _voiceFailed(Object error, {required String fallbackStage}) async {
+    _voice.disarmHandsFree();
     final stage = error is MomVoiceException ? error.stage : fallbackStage;
     if (_voiceState.state != MomVoiceState.error) {
       _setVoiceState(
@@ -411,6 +412,7 @@ class _MomAppState extends State<MomApp> {
     final config = _config;
     final sync = _sync;
     if (config == null || sync == null || text.trim().isEmpty) return;
+    if (inputMode != 'voice') _voice.disarmHandsFree();
 
     if (_voiceState.state == MomVoiceState.listening) {
       await _voice.stopListening();

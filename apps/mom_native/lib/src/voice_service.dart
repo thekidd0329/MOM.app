@@ -82,6 +82,9 @@ class MomVoiceService {
   DateTime _redirectCooldownUntil = DateTime.fromMillisecondsSinceEpoch(0);
   String _lastMomSpeech = '';
   String _lastMeaningfulPartial = '';
+  bool _handsFreeArmed = false;
+  bool _finalTranscriptDelivered = false;
+  int _handsFreeGeneration = 0;
 
   String _generatedSpeechText = '';
   final List<String> _completedSpokenChunks = <String>[];
@@ -91,6 +94,7 @@ class MomVoiceService {
 
   bool get listening => _speech.isListening;
   MomVoiceException? get lastFailure => _lastFailure;
+  bool get handsFreeArmed => _handsFreeArmed;
 
   Future<bool> initialize() async {
     try {
@@ -176,6 +180,8 @@ class MomVoiceService {
     required void Function(String text) onFinal,
     required void Function(bool listening) onState,
   }) async {
+    _handsFreeArmed = true;
+    _finalTranscriptDelivered = false;
     await stopBargeInDetection();
     if (_playingFile != null) {
       await stopSpeaking(preserveContinuity: true);
@@ -209,6 +215,7 @@ class MomVoiceService {
           _lastMeaningfulPartial = '';
           if (_speech.isListening) await _speech.stop();
           onState(false);
+          _scheduleHandsFreeResume(delay: const Duration(milliseconds: 650));
         }());
       },
     );
@@ -261,6 +268,7 @@ class MomVoiceService {
 
           _listenGuard.complete(listenGeneration);
           _lastMeaningfulPartial = '';
+          _finalTranscriptDelivered = true;
           onFinal(text);
           onState(false);
         },
@@ -294,7 +302,11 @@ class MomVoiceService {
       onState(false);
       _redirectCooldownUntil = DateTime.now().add(const Duration(seconds: 20));
       try {
-        await speak(redirect, automaticBargeIn: false);
+        await speak(
+          redirect,
+          automaticBargeIn: false,
+          resumeHandsFree: false,
+        );
       } catch (error) {
         _lastFailure = error is MomVoiceException
             ? error
@@ -318,7 +330,11 @@ class MomVoiceService {
       onState(false);
       _redirectCooldownUntil = DateTime.now().add(const Duration(seconds: 10));
       try {
-        await speak('Wait, what did you just say?', automaticBargeIn: false);
+        await speak(
+          'Wait, what did you just say?',
+          automaticBargeIn: false,
+          resumeHandsFree: false,
+        );
       } catch (error) {
         _lastFailure = error is MomVoiceException
             ? error
@@ -397,6 +413,7 @@ class MomVoiceService {
         if (text.trim().isEmpty) return;
         _bargeInError = null;
         _listeningState = stateHandler;
+        _finalTranscriptDelivered = true;
         stateHandler(false);
         finalHandler(text.trim());
       },
@@ -414,6 +431,10 @@ class MomVoiceService {
   }
 
   Future<void> stopListening() async {
+    if (!_finalTranscriptDelivered) {
+      disarmHandsFree();
+    }
+    _finalTranscriptDelivered = false;
     _listenGuard.invalidate();
     _bargeInGeneration++;
     _bargeInError = null;
@@ -421,6 +442,36 @@ class MomVoiceService {
     await _speech.stop();
     _listeningState?.call(false);
     _listeningState = null;
+  }
+
+  void disarmHandsFree() {
+    _handsFreeArmed = false;
+    _finalTranscriptDelivered = false;
+    _handsFreeGeneration++;
+  }
+
+  void _scheduleHandsFreeResume({
+    Duration delay = const Duration(milliseconds: 260),
+  }) {
+    if (!_handsFreeArmed) return;
+    final generation = ++_handsFreeGeneration;
+    unawaited(() async {
+      await Future<void>.delayed(delay);
+      if (!_handsFreeArmed || generation != _handsFreeGeneration) return;
+      final finalHandler = _conversationFinal;
+      final stateHandler = _conversationListeningState;
+      if (finalHandler == null || stateHandler == null) return;
+      if (_speech.isListening || _playingFile != null) return;
+      try {
+        await listen(onFinal: finalHandler, onState: stateHandler);
+      } catch (error) {
+        _lastFailure = error is MomVoiceException
+            ? error
+            : MomVoiceException('hands_free_listen', error);
+        disarmHandsFree();
+        stateHandler(false);
+      }
+    }());
   }
 
   Future<void> stopSpeaking({bool preserveContinuity = false}) async {
@@ -532,6 +583,7 @@ class MomVoiceService {
     void Function()? onSynthesisStart,
     void Function()? onPlaybackStart,
     bool automaticBargeIn = true,
+    bool resumeHandsFree = true,
   }) async {
     final chunks = _chunker.chunk(text);
     if (chunks.isEmpty) return;
@@ -589,6 +641,7 @@ class MomVoiceService {
       await stopBargeInDetection();
       _lastMomSpeech = _normalizeSpeech(text);
       _clearSpeechTracking();
+      if (resumeHandsFree) _scheduleHandsFreeResume();
     }
     _lastFailure = null;
   }
@@ -651,6 +704,7 @@ class MomVoiceService {
         await stopBargeInDetection();
         _lastMomSpeech = _normalizeSpeech(expectedSpeech.toString());
         _clearSpeechTracking();
+        _scheduleHandsFreeResume();
       }
       _lastFailure = null;
     } catch (error) {
