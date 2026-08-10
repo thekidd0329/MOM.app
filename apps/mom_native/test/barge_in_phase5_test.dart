@@ -33,7 +33,7 @@ void main() {
   test('real user speech immediately cancels audible playback', () async {
     final source = await File('lib/src/voice_service.dart').readAsString();
 
-    expect(source, contains('await stopSpeaking()'));
+    expect(source, contains('await stopSpeaking(preserveContinuity: true)'));
     expect(source, contains('_playbackCancelled'));
     expect(source, contains('Future.any<void>([completed, cancelled])'));
     expect(source, contains('await _player.stop()'));
