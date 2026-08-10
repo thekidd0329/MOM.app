@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import 'tts_chunker.dart';
+import 'voice_continuity.dart';
 
 const _modelName = 'kokoro-82m-q8_0.gguf';
 const _voiceName = 'kokoro-voice-af_heart.gguf';
@@ -19,6 +20,7 @@ const _modelUrl =
 const _voiceUrl =
     'https://huggingface.co/cstr/kokoro-voices-GGUF/resolve/main/kokoro-voice-af_heart.gguf?download=true';
 const _maxSynthesizedAhead = 2;
+const _kokoroSampleRate = 24000;
 
 class MomVoiceException implements Exception {
   const MomVoiceException(this.stage, this.cause);
@@ -68,6 +70,12 @@ class MomVoiceService {
   void Function(Object error)? _bargeInError;
   MomVoiceException? _lastFailure;
   bool _bargeInDetected = false;
+
+  String _generatedSpeechText = '';
+  final List<String> _completedSpokenChunks = <String>[];
+  String _activeChunkText = '';
+  DateTime? _activeChunkStartedAt;
+  Duration _activeChunkDuration = Duration.zero;
 
   bool get listening => _speech.isListening;
   MomVoiceException? get lastFailure => _lastFailure;
@@ -249,7 +257,7 @@ class MomVoiceService {
       expectedMomSpeech: expectedMomSpeech,
       onDetected: (_) {
         unawaited(() async {
-          await stopSpeaking();
+          await stopSpeaking(preserveContinuity: true);
           await Future<void>.delayed(Duration.zero);
           stateHandler(true);
         }());
@@ -282,7 +290,8 @@ class MomVoiceService {
     _listeningState = null;
   }
 
-  Future<void> stopSpeaking() async {
+  Future<void> stopSpeaking({bool preserveContinuity = false}) async {
+    if (preserveContinuity) _preserveInterruptedThought();
     _speechGeneration++;
     final cancellation = _playbackCancelled;
     if (cancellation != null && !cancellation.isCompleted) {
@@ -294,6 +303,97 @@ class MomVoiceService {
     if (playing != null && await playing.exists()) {
       await playing.delete();
     }
+    _clearSpeechTracking();
+  }
+
+  void _beginSpeechTracking(String generatedText) {
+    _generatedSpeechText = _normalizeSpeech(generatedText);
+    _completedSpokenChunks.clear();
+    _activeChunkText = '';
+    _activeChunkStartedAt = null;
+    _activeChunkDuration = Duration.zero;
+  }
+
+  void _updateGeneratedSpeech(String generatedText) {
+    _generatedSpeechText = _normalizeSpeech(generatedText);
+  }
+
+  void _startActiveChunk(String text, Uint8List wav) {
+    _activeChunkText = _normalizeSpeech(text);
+    _activeChunkStartedAt = DateTime.now();
+    final pcmBytes = math.max(0, wav.length - 44);
+    final sampleCount = pcmBytes ~/ 2;
+    final microseconds = sampleCount == 0
+        ? 0
+        : ((sampleCount / _kokoroSampleRate) * 1000000).round();
+    _activeChunkDuration = Duration(microseconds: microseconds);
+  }
+
+  void _finishActiveChunk(String text) {
+    final normalized = _normalizeSpeech(text);
+    if (normalized.isNotEmpty) _completedSpokenChunks.add(normalized);
+    _activeChunkText = '';
+    _activeChunkStartedAt = null;
+    _activeChunkDuration = Duration.zero;
+  }
+
+  void _preserveInterruptedThought() {
+    final fullWords = _normalizeSpeech(_generatedSpeechText)
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList(growable: false);
+    if (fullWords.isEmpty) return;
+
+    var heardWordCount = _completedSpokenChunks
+        .expand((chunk) => chunk.split(RegExp(r'\s+')))
+        .where((word) => word.isNotEmpty)
+        .length;
+
+    final active = _activeChunkText.trim();
+    var partial = false;
+    if (active.isNotEmpty) {
+      partial = true;
+      final activeWords = active
+          .split(RegExp(r'\s+'))
+          .where((word) => word.isNotEmpty)
+          .toList(growable: false);
+      final started = _activeChunkStartedAt;
+      final durationMicros = _activeChunkDuration.inMicroseconds;
+      var fraction = 0.0;
+      if (started != null && durationMicros > 0) {
+        fraction = DateTime.now()
+                .difference(started)
+                .inMicroseconds /
+            durationMicros;
+      }
+      fraction = fraction.clamp(0.0, 1.0);
+      final heardInActive = (activeWords.length * fraction).floor();
+      heardWordCount += heardInActive;
+    }
+
+    heardWordCount = heardWordCount.clamp(0, fullWords.length);
+    final heard = fullWords.take(heardWordCount).join(' ').trim();
+    final unsaid = fullWords.skip(heardWordCount).join(' ').trim();
+    if (unsaid.isEmpty) return;
+
+    MomVoiceContinuity.preserve(
+      InterruptedMomThought(
+        heardText: heard,
+        unsaidText: unsaid,
+        currentChunkMayBePartial: partial,
+      ),
+    );
+  }
+
+  String _normalizeSpeech(String value) =>
+      value.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  void _clearSpeechTracking() {
+    _generatedSpeechText = '';
+    _completedSpokenChunks.clear();
+    _activeChunkText = '';
+    _activeChunkStartedAt = null;
+    _activeChunkDuration = Duration.zero;
   }
 
   Future<void> speak(
@@ -305,6 +405,7 @@ class MomVoiceService {
     if (chunks.isEmpty) return;
 
     final generation = ++_speechGeneration;
+    _beginSpeechTracking(text);
     final assets = await _requireAssets();
     if (generation != _speechGeneration) return;
 
@@ -338,6 +439,7 @@ class MomVoiceService {
       if (generation != _speechGeneration) return;
       await _playWav(
         wav,
+        chunkText: chunks[index],
         assets: assets,
         generation: generation,
         index: index,
@@ -349,7 +451,10 @@ class MomVoiceService {
             : null,
       );
     }
-    if (generation == _speechGeneration) await stopBargeInDetection();
+    if (generation == _speechGeneration) {
+      await stopBargeInDetection();
+      _clearSpeechTracking();
+    }
     _lastFailure = null;
   }
 
@@ -359,6 +464,7 @@ class MomVoiceService {
     void Function()? onPlaybackStart,
   }) async {
     final generation = ++_speechGeneration;
+    _beginSpeechTracking('');
     final assets = await _requireAssets();
     if (generation != _speechGeneration) return;
 
@@ -378,6 +484,7 @@ class MomVoiceService {
       if (generation != _speechGeneration) return;
       await _playWav(
         wav,
+        chunkText: chunk,
         assets: assets,
         generation: generation,
         index: index,
@@ -397,6 +504,7 @@ class MomVoiceService {
       await for (final delta in deltas) {
         if (generation != _speechGeneration) return;
         expectedSpeech.write(delta);
+        _updateGeneratedSpeech(expectedSpeech.toString());
         for (final chunk in assembler.add(delta)) {
           await speakChunk(chunk);
         }
@@ -404,7 +512,10 @@ class MomVoiceService {
       for (final chunk in assembler.close()) {
         await speakChunk(chunk);
       }
-      if (generation == _speechGeneration) await stopBargeInDetection();
+      if (generation == _speechGeneration) {
+        await stopBargeInDetection();
+        _clearSpeechTracking();
+      }
       _lastFailure = null;
     } catch (error) {
       final failure = error is MomVoiceException
@@ -472,6 +583,7 @@ class MomVoiceService {
 
   Future<void> _playWav(
     Uint8List wav, {
+    required String chunkText,
     required _VoiceAssets assets,
     required int generation,
     required int index,
@@ -486,13 +598,15 @@ class MomVoiceService {
 
       final completed = _player.onPlayerComplete.first;
       final cancelled = _playbackCancelled?.future ?? Future<void>.value();
-      onPlaybackStart?.call();
       await _player.play(DeviceFileSource(output.path));
       _playingFile = output;
+      _startActiveChunk(chunkText, wav);
+      onPlaybackStart?.call();
       await Future.any<void>([completed, cancelled]).timeout(
         const Duration(minutes: 2),
         onTimeout: () {},
       );
+      if (generation == _speechGeneration) _finishActiveChunk(chunkText);
     } catch (error) {
       throw MomVoiceException('playback', error);
     } finally {
@@ -554,6 +668,7 @@ class MomVoiceService {
     _conversationFinal = null;
     _conversationListeningState = null;
     _bargeInError = null;
+    _clearSpeechTracking();
     await _speech.stop();
     await _player.stop();
     await _player.dispose();
@@ -596,7 +711,7 @@ Uint8List _synthesize(_SynthesisRequest request) {
   try {
     session.setVoice(request.voicePath);
     final pcm = session.synthesize(request.text);
-    return _pcmToWav(pcm, 24000);
+    return _pcmToWav(pcm, _kokoroSampleRate);
   } finally {
     session.close();
   }
