@@ -39,7 +39,8 @@ void main() {
     expect(source, contains('MomListenSessionGuard _listenGuard'));
     expect(source, contains('const _normalListenTimeout = Duration(seconds: 35)'));
     expect(source, contains('_listenGuard.isCurrent(listenGeneration)'));
-    expect(source, contains("MomVoiceException(\n            'speech_timeout'"));
+    expect(source, contains("'speech_timeout'"));
+    expect(source, contains('No final transcript arrived before the listening timeout'));
     expect(source, contains('if (_playingFile != null)'));
     expect(source, contains('await stopSpeaking(preserveContinuity: true)'));
   });
