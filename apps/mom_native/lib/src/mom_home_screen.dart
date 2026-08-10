@@ -44,7 +44,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
   final FocusNode _textFocus = FocusNode();
 
   late final AnimationController _entrance;
-  late final AnimationController _energy;
+  late final AnimationController _electricity;
 
   bool _textMode = false;
   String _caption = '';
@@ -56,12 +56,18 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     super.initState();
     _entrance = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2700),
-    )..forward();
-    _energy = AnimationController(
+      duration: const Duration(milliseconds: 2400),
+    );
+    _electricity = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: const Duration(milliseconds: 480),
     )..repeat();
+    _entrance.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _electricity.stop();
+      }
+    });
+    _entrance.forward();
     _maybeStartLatestCaption();
   }
 
@@ -157,7 +163,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     widget.onSend(text);
   }
 
-  double _reveal(double start, {double span = 0.09}) {
+  double _reveal(double start, {double span = 0.10}) {
     return ((_entrance.value - start) / span).clamp(0.0, 1.0).toDouble();
   }
 
@@ -166,29 +172,23 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     required Widget child,
     Alignment origin = Alignment.center,
   }) {
-    final progress = Curves.easeOutBack.transform(_reveal(start));
-    final opacity = _reveal(start, span: 0.06);
+    final raw = _reveal(start);
+    final scaleProgress = Curves.easeOutBack.transform(raw);
     return Opacity(
-      opacity: opacity,
+      opacity: _reveal(start, span: 0.055),
       child: Transform.scale(
         alignment: origin,
-        scale: 0.62 + (0.38 * progress),
+        scale: 0.55 + (0.45 * scaleProgress),
         child: child,
       ),
     );
-  }
-
-  String get _statusText {
-    if (widget.busy) return 'Thinking...';
-    if (widget.listening) return 'Listening...';
-    return 'Tap the mic';
   }
 
   @override
   void dispose() {
     _captionRun++;
     _entrance.dispose();
-    _energy.dispose();
+    _electricity.dispose();
     _textFocus.dispose();
     _controller.dispose();
     super.dispose();
@@ -207,54 +207,53 @@ class _MomHomeScreenState extends State<MomHomeScreen>
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final orbSize = math.min(
-              constraints.maxWidth * 0.92,
-              constraints.maxHeight * 0.58,
-            );
-            final resolvedOrbSize = orbSize.clamp(220.0, 590.0).toDouble();
             final viewport = Size(constraints.maxWidth, constraints.maxHeight);
-            final source = Offset(viewport.width / 2, viewport.height * 0.47);
+            final artworkSize = math.min(
+              constraints.maxWidth * 0.94,
+              constraints.maxHeight * 0.66,
+            ).clamp(230.0, 650.0).toDouble();
+
+            // 2546.png includes the canonical glowing "Listening…" treatment.
+            // Keep that image untouched. Its plasma center sits below the image
+            // midpoint, so strikes originate from the visible globe rather than
+            // from the baked-in title area.
+            final strikeSource = Offset(
+              viewport.width / 2,
+              viewport.height * 0.52,
+            );
+            final sourceRadius = artworkSize * 0.22;
 
             return AnimatedBuilder(
-              animation: Listenable.merge([_entrance, _energy]),
+              animation: Listenable.merge([_entrance, _electricity]),
               builder: (context, _) {
                 return Stack(
                   children: [
                     Positioned.fill(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 54, 18, 90),
+                        padding: const EdgeInsets.fromLTRB(14, 52, 14, 86),
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            _zappedIn(
-                              start: 0.63,
-                              child: Text(
-                                _statusText,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: constraints.maxWidth < 500 ? 27 : 34,
-                                  fontWeight: FontWeight.w600,
-                                  color: accent,
-                                  shadows: [
-                                    Shadow(
-                                      color: accent.withValues(alpha: 0.38),
-                                      blurRadius: 18,
-                                    ),
-                                  ],
+                            Semantics(
+                              label: widget.busy
+                                  ? 'MOM is thinking'
+                                  : widget.listening
+                                      ? 'MOM is listening'
+                                      : 'MOM ${widget.status}',
+                              image: true,
+                              child: SizedBox.square(
+                                dimension: artworkSize,
+                                child: Image.asset(
+                                  _canonicalArtwork,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
+                                  gaplessPlayback: true,
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 10),
-                            _TrademarkArtwork(
-                              assetPath: _canonicalArtwork,
-                              size: resolvedOrbSize,
-                              accent: accent,
-                              energized: widget.busy || widget.listening,
-                              phase: _energy.value,
-                            ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 8),
                             AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 180),
+                              duration: const Duration(milliseconds: 160),
                               child: _caption.isEmpty
                                   ? const SizedBox(height: 64)
                                   : ConstrainedBox(
@@ -310,8 +309,9 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                           painter: _ControlZapPainter(
                             accent: accent,
                             progress: _entrance.value,
-                            phase: _energy.value,
-                            source: source,
+                            phase: _electricity.value,
+                            source: strikeSource,
+                            sourceRadius: sourceRadius,
                             viewport: viewport,
                           ),
                         ),
@@ -321,7 +321,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                       top: 16,
                       left: 16,
                       child: _zappedIn(
-                        start: 0.16,
+                        start: 0.20,
                         origin: Alignment.topLeft,
                         child: _OutlineIconButton(
                           icon: widget.listening
@@ -341,7 +341,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                       top: 16,
                       right: 16,
                       child: _zappedIn(
-                        start: 0.29,
+                        start: 0.38,
                         origin: Alignment.topRight,
                         child: GestureDetector(
                           onLongPress: widget.onDiagnostics,
@@ -358,7 +358,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                       bottom: 28,
                       left: 24,
                       child: _zappedIn(
-                        start: 0.42,
+                        start: 0.56,
                         origin: Alignment.bottomLeft,
                         child: Text(
                           'Version 1.0.1',
@@ -379,7 +379,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                       bottom: 16,
                       right: 16,
                       child: _zappedIn(
-                        start: 0.54,
+                        start: 0.74,
                         origin: Alignment.bottomRight,
                         child: Container(
                           decoration: BoxDecoration(
@@ -504,58 +504,13 @@ class _OutlineIconButton extends StatelessWidget {
   }
 }
 
-class _TrademarkArtwork extends StatelessWidget {
-  const _TrademarkArtwork({
-    required this.assetPath,
-    required this.size,
-    required this.accent,
-    required this.energized,
-    required this.phase,
-  });
-
-  final String assetPath;
-  final double size;
-  final Color accent;
-  final bool energized;
-  final double phase;
-
-  @override
-  Widget build(BuildContext context) {
-    final pulse = 0.5 + 0.5 * math.sin(phase * math.pi * 2);
-    final glow = energized ? 0.24 + (0.12 * pulse) : 0.14 + (0.05 * pulse);
-
-    return SizedBox(
-      width: size,
-      height: size,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(size * 0.12),
-          boxShadow: [
-            BoxShadow(
-              color: accent.withValues(alpha: glow),
-              blurRadius: size * (0.075 + 0.025 * pulse),
-              spreadRadius: size * 0.005,
-            ),
-          ],
-        ),
-        child: Image.asset(
-          assetPath,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-          gaplessPlayback: true,
-          errorBuilder: (context, error, stackTrace) => const SizedBox.expand(),
-        ),
-      ),
-    );
-  }
-}
-
 class _ControlZapPainter extends CustomPainter {
   const _ControlZapPainter({
     required this.accent,
     required this.progress,
     required this.phase,
     required this.source,
+    required this.sourceRadius,
     required this.viewport,
   });
 
@@ -563,43 +518,52 @@ class _ControlZapPainter extends CustomPainter {
   final double progress;
   final double phase;
   final Offset source;
+  final double sourceRadius;
   final Size viewport;
 
   @override
   void paint(Canvas canvas, Size size) {
     final targets = <_ZapTarget>[
-      _ZapTarget(Offset(42, 42), 0.07, 0.19, 1),
-      _ZapTarget(Offset(viewport.width - 42, 42), 0.20, 0.32, 2),
-      _ZapTarget(Offset(66, viewport.height - 34), 0.33, 0.45, 3),
+      _ZapTarget(Offset(42, 42), 0.08, 0.25, 11),
+      _ZapTarget(Offset(viewport.width - 42, 42), 0.26, 0.43, 23),
+      _ZapTarget(Offset(66, viewport.height - 34), 0.44, 0.61, 37),
       _ZapTarget(
         Offset(viewport.width - 42, viewport.height - 42),
-        0.46,
-        0.58,
-        4,
+        0.62,
+        0.79,
+        53,
       ),
-      _ZapTarget(Offset(viewport.width / 2, 94), 0.57, 0.68, 5),
     ];
 
     for (final target in targets) {
-      _drawStrike(canvas, source, target);
+      _drawStrike(canvas, target);
     }
   }
 
-  void _drawStrike(Canvas canvas, Offset start, _ZapTarget target) {
+  void _drawStrike(Canvas canvas, _ZapTarget target) {
     final local = ((progress - target.start) / (target.end - target.start))
         .clamp(0.0, 1.0)
         .toDouble();
     if (local <= 0 || local >= 1) return;
 
-    final travel = Curves.easeOutCubic.transform((local * 1.25).clamp(0.0, 1.0));
+    final fullDirection = target.point - source;
+    final fullLength = fullDirection.distance;
+    if (fullLength <= sourceRadius + 1) return;
+
+    final unit = fullDirection / fullLength;
+    final start = source + (unit * sourceRadius);
+    final travel = Curves.easeOutCubic.transform(
+      (local * 1.18).clamp(0.0, 1.0).toDouble(),
+    );
     final end = Offset.lerp(start, target.point, travel)!;
     final direction = end - start;
     final length = direction.distance;
     if (length <= 1) return;
 
     final perpendicular = Offset(-direction.dy, direction.dx) / length;
-    final segments = math.max(8, (length / 34).round());
+    final segments = math.max(9, (length / 28).round()).toInt();
     final path = Path()..moveTo(start.dx, start.dy);
+    final points = <Offset>[start];
 
     for (var i = 1; i < segments; i++) {
       final t = i / segments;
@@ -607,13 +571,22 @@ class _ControlZapPainter extends CustomPainter {
       final envelope = math.sin(t * math.pi);
       final noise = math.sin(
         (i * 9.17) +
-            (target.seed * 7.31) +
-            (phase * math.pi * 6),
+            (target.seed * 1.73) +
+            (phase * math.pi * 4),
       );
-      final jitter = perpendicular * noise * envelope * (11 + target.seed * 1.3);
+      final secondary = math.sin(
+        (i * 4.63) -
+            (target.seed * 0.91) +
+            (phase * math.pi * 7),
+      );
+      final jitter = perpendicular *
+          (noise * 10 + secondary * 4) *
+          envelope;
       final point = base + jitter;
+      points.add(point);
       path.lineTo(point.dx, point.dy);
     }
+    points.add(end);
     path.lineTo(end.dx, end.dy);
 
     final flash = math.sin(local * math.pi).abs();
@@ -621,38 +594,51 @@ class _ControlZapPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
-      ..strokeWidth = 8
-      ..color = accent.withValues(alpha: 0.24 * flash)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 13);
-    final corePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..strokeWidth = 2.1
-      ..color = Colors.white.withValues(alpha: 0.95 * flash);
+      ..strokeWidth = 10
+      ..color = accent.withValues(alpha: 0.27 * flash)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15);
     final purplePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
-      ..strokeWidth = 4.2
-      ..color = accent.withValues(alpha: 0.72 * flash)
+      ..strokeWidth = 4.6
+      ..color = accent.withValues(alpha: 0.78 * flash)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    final corePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 1.8
+      ..color = Colors.white.withValues(alpha: 0.96 * flash);
 
     canvas.drawPath(path, glowPaint);
     canvas.drawPath(path, purplePaint);
     canvas.drawPath(path, corePaint);
 
-    if (local > 0.68) {
-      final impact = ((local - 0.68) / 0.32).clamp(0.0, 1.0).toDouble();
+    final branchPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 1.1
+      ..color = Colors.white.withValues(alpha: 0.55 * flash);
+    for (var i = 3; i < points.length - 2; i += 4) {
+      final point = points[i];
+      final sign = ((i + target.seed).isEven) ? 1.0 : -1.0;
+      final branchLength = 10.0 + ((target.seed + i) % 8);
+      final branchEnd = point + (perpendicular * branchLength * sign);
+      canvas.drawLine(point, branchEnd, branchPaint);
+    }
+
+    if (local > 0.67) {
+      final impact = ((local - 0.67) / 0.33).clamp(0.0, 1.0).toDouble();
       final impactAlpha = math.sin(impact * math.pi).abs();
       final impactPaint = Paint()
-        ..color = accent.withValues(alpha: 0.38 * impactAlpha)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14);
-      canvas.drawCircle(target.point, 18 + 13 * impactAlpha, impactPaint);
+        ..color = accent.withValues(alpha: 0.42 * impactAlpha)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+      canvas.drawCircle(target.point, 18 + 15 * impactAlpha, impactPaint);
 
       final hotImpact = Paint()
-        ..color = Colors.white.withValues(alpha: 0.9 * impactAlpha);
-      canvas.drawCircle(target.point, 2.5 + 3.5 * impactAlpha, hotImpact);
+        ..color = Colors.white.withValues(alpha: 0.92 * impactAlpha);
+      canvas.drawCircle(target.point, 2.5 + 4.0 * impactAlpha, hotImpact);
     }
   }
 
@@ -662,6 +648,7 @@ class _ControlZapPainter extends CustomPainter {
         oldDelegate.phase != phase ||
         oldDelegate.accent != accent ||
         oldDelegate.source != source ||
+        oldDelegate.sourceRadius != sourceRadius ||
         oldDelegate.viewport != viewport;
   }
 }
