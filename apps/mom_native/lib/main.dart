@@ -47,6 +47,8 @@ class _MomAppState extends State<MomApp> {
 
   MomConfig? _config;
   MomSyncClient? _sync;
+  MomBrainStreamClient? _activeBrainStream;
+  int _conversationGeneration = 0;
   String _systemPrompt =
       'MOM exists to act in the direct best interest of her user; every response should serve that purpose.';
   String _sessionId = '';
@@ -111,6 +113,42 @@ class _MomAppState extends State<MomApp> {
       'stage': stage,
       'error_type': error.runtimeType.toString(),
     });
+  }
+
+  void _handleVoiceListeningState(bool value) {
+    if (value) {
+      if (_voiceState.state == MomVoiceState.speaking ||
+          _voiceState.state == MomVoiceState.synthesizing) {
+        _setVoiceState(MomVoiceState.interrupted);
+      }
+      if (_voiceState.state == MomVoiceState.error) {
+        _recoverVoiceState();
+      }
+      if (_voiceState.state == MomVoiceState.idle ||
+          _voiceState.state == MomVoiceState.interrupted) {
+        _setVoiceState(MomVoiceState.listening);
+      }
+      return;
+    }
+
+    if (_voiceState.state == MomVoiceState.listening) {
+      _setVoiceState(MomVoiceState.idle);
+    }
+  }
+
+  void _handleVoiceFinal(String text) {
+    if (text.trim().isEmpty) return;
+    if (_voiceState.state == MomVoiceState.speaking ||
+        _voiceState.state == MomVoiceState.synthesizing) {
+      _setVoiceState(MomVoiceState.interrupted);
+    }
+    if (_voiceState.state == MomVoiceState.interrupted) {
+      _setVoiceState(MomVoiceState.listening);
+    }
+    if (_voiceState.state == MomVoiceState.listening) {
+      _setVoiceState(MomVoiceState.idle);
+    }
+    unawaited(_send(text, inputMode: 'voice'));
   }
 
   Future<void> _speakText(String text) async {
@@ -332,31 +370,37 @@ class _MomAppState extends State<MomApp> {
     if (_voiceState.state == MomVoiceState.error) {
       _recoverVoiceState();
     }
-    if (_voiceState.state != MomVoiceState.idle) return;
+
+    if (_voiceState.state == MomVoiceState.speaking ||
+        _voiceState.state == MomVoiceState.synthesizing) {
+      _setVoiceState(MomVoiceState.interrupted);
+      await _voice.stopSpeaking(preserveContinuity: true);
+    }
+
+    if (_voiceState.state != MomVoiceState.idle &&
+        _voiceState.state != MomVoiceState.interrupted) {
+      return;
+    }
 
     await _probeMicrophone(true);
     if (!_microphone.permissionGranted) {
+      if (_voiceState.state == MomVoiceState.interrupted) {
+        _setVoiceState(MomVoiceState.idle);
+      }
       if (mounted) setState(() => _status = 'Microphone permission needed');
       return;
     }
 
-    _setVoiceState(MomVoiceState.listening);
+    if (_voiceState.state == MomVoiceState.interrupted) {
+      _setVoiceState(MomVoiceState.listening);
+    } else {
+      _setVoiceState(MomVoiceState.listening);
+    }
+
     try {
       await _voice.listen(
-        onState: (value) {
-          if (value && _voiceState.state == MomVoiceState.idle) {
-            _setVoiceState(MomVoiceState.listening);
-          } else if (!value &&
-              _voiceState.state == MomVoiceState.listening) {
-            _setVoiceState(MomVoiceState.idle);
-          }
-        },
-        onFinal: (text) {
-          if (_voiceState.state == MomVoiceState.listening) {
-            _setVoiceState(MomVoiceState.idle);
-          }
-          unawaited(_send(text, inputMode: 'voice'));
-        },
+        onState: _handleVoiceListeningState,
+        onFinal: _handleVoiceFinal,
       );
     } catch (error) {
       await _voiceFailed(error, fallbackStage: 'speech_recognition');
@@ -383,6 +427,11 @@ class _MomAppState extends State<MomApp> {
       await _openSettings();
       return;
     }
+
+    final turnGeneration = ++_conversationGeneration;
+    final previousStream = _activeBrainStream;
+    _activeBrainStream = null;
+    previousStream?.close();
 
     final prior = List<ChatTurn>.from(_turns);
     final userTurn = ChatTurn(
@@ -431,6 +480,7 @@ class _MomAppState extends State<MomApp> {
           syncUrl: config.syncUrl,
           syncClient: sync,
         );
+        _activeBrainStream = streamClient;
         deltaController = StreamController<String>();
         speechFuture = _speakDeltaStream(deltaController.stream);
 
@@ -447,7 +497,12 @@ class _MomAppState extends State<MomApp> {
             userText: text.trim(),
             temperature: config.temperature,
             maxHistory: config.maxHistory,
-            onDelta: deltaController.add,
+            onDelta: (delta) {
+              if (turnGeneration == _conversationGeneration &&
+                  !(deltaController?.isClosed ?? true)) {
+                deltaController?.add(delta);
+              }
+            },
           );
         } catch (error, stack) {
           streamError = error;
@@ -456,6 +511,7 @@ class _MomAppState extends State<MomApp> {
           await deltaController.close();
         }
 
+        if (turnGeneration != _conversationGeneration) return;
         if (streamError != null) {
           await speechFuture;
           Error.throwWithStackTrace(streamError, streamStack!);
@@ -464,6 +520,7 @@ class _MomAppState extends State<MomApp> {
         reply = ModelReply(text: completed.text, model: completed.model);
       }
 
+      if (turnGeneration != _conversationGeneration) return;
       final assistantTurn = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
@@ -479,6 +536,7 @@ class _MomAppState extends State<MomApp> {
         },
       );
       await _store.append(assistantTurn);
+      if (turnGeneration != _conversationGeneration) return;
       if (mounted) {
         setState(() {
           _turns = [..._turns, assistantTurn];
@@ -496,6 +554,7 @@ class _MomAppState extends State<MomApp> {
         await speechFuture;
       }
 
+      if (turnGeneration != _conversationGeneration) return;
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
         'model': reply.model,
@@ -505,6 +564,7 @@ class _MomAppState extends State<MomApp> {
         'brain_transport': useLocal ? 'local_complete' : 'secure_sse',
       }));
     } catch (error) {
+      if (turnGeneration != _conversationGeneration) return;
       if (_voiceState.state == MomVoiceState.thinking) {
         _recoverVoiceState();
       }
@@ -523,6 +583,7 @@ class _MomAppState extends State<MomApp> {
         },
       );
       await _store.append(failure);
+      if (turnGeneration != _conversationGeneration) return;
       if (mounted) {
         setState(() {
           _turns = [..._turns, failure];
@@ -554,6 +615,9 @@ class _MomAppState extends State<MomApp> {
         },
       ));
     } finally {
+      if (identical(_activeBrainStream, streamClient)) {
+        _activeBrainStream = null;
+      }
       streamClient?.close();
       client.close();
     }
@@ -602,6 +666,9 @@ class _MomAppState extends State<MomApp> {
 
   @override
   void dispose() {
+    _conversationGeneration++;
+    _activeBrainStream?.close();
+    _activeBrainStream = null;
     _sync?.close();
     _llama.stopIfStartedByMom();
     unawaited(_micProbe.dispose());
