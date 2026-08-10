@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'src/brain_stream_client.dart';
 import 'src/config.dart';
 import 'src/diagnostics.dart';
 import 'src/knowledge.dart';
@@ -145,6 +146,31 @@ class _MomAppState extends State<MomApp> {
       }
     } catch (error) {
       await _voiceFailed(error, fallbackStage: 'output');
+    }
+  }
+
+  Future<void> _speakDeltaStream(Stream<String> deltas) async {
+    try {
+      await _voice.speakStream(
+        deltas,
+        onSynthesisStart: () {
+          if (_voiceState.state == MomVoiceState.thinking ||
+              _voiceState.state == MomVoiceState.idle) {
+            _setVoiceState(MomVoiceState.synthesizing);
+          }
+        },
+        onPlaybackStart: () {
+          if (_voiceState.state == MomVoiceState.synthesizing) {
+            _setVoiceState(MomVoiceState.speaking);
+          }
+        },
+      );
+      if (_voiceState.state == MomVoiceState.speaking ||
+          _voiceState.state == MomVoiceState.synthesizing) {
+        _setVoiceState(MomVoiceState.idle);
+      }
+    } catch (error) {
+      await _voiceFailed(error, fallbackStage: 'stream_playback');
     }
   }
 
@@ -339,7 +365,8 @@ class _MomAppState extends State<MomApp> {
 
   Future<void> _send(String text, {String inputMode = 'text'}) async {
     final config = _config;
-    if (config == null || text.trim().isEmpty) return;
+    final sync = _sync;
+    if (config == null || sync == null || text.trim().isEmpty) return;
 
     if (_voiceState.state == MomVoiceState.listening) {
       await _voice.stopListening();
@@ -384,14 +411,59 @@ class _MomAppState extends State<MomApp> {
 
     final started = DateTime.now();
     final client = ModelClient(config.copy());
+    MomBrainStreamClient? streamClient;
+    StreamController<String>? deltaController;
+    Future<void>? speechFuture;
     try {
-      final knowledge = _knowledge.contextFor(text);
-      final reply = await client.chat(
-        systemPrompt: _systemPrompt,
-        history: prior,
-        userText: text.trim(),
-        knowledgeContext: knowledge,
-      );
+      final useLocal = Platform.isLinux && config.useLocalLlama;
+      final knowledge = useLocal ? _knowledge.contextFor(text) : '';
+      ModelReply reply;
+
+      if (useLocal) {
+        reply = await client.chat(
+          systemPrompt: _systemPrompt,
+          history: prior,
+          userText: text.trim(),
+          knowledgeContext: knowledge,
+        );
+      } else {
+        streamClient = MomBrainStreamClient(
+          syncUrl: config.syncUrl,
+          syncClient: sync,
+        );
+        deltaController = StreamController<String>();
+        speechFuture = _speakDeltaStream(deltaController.stream);
+
+        Object? streamError;
+        StackTrace? streamStack;
+        BrainReply? streamedReply;
+        try {
+          streamedReply = await streamClient.chat(
+            history: prior
+                .where((turn) =>
+                    turn.role == 'user' || turn.role == 'assistant')
+                .map((turn) => {'role': turn.role, 'content': turn.content})
+                .toList(growable: false),
+            userText: text.trim(),
+            temperature: config.temperature,
+            maxHistory: config.maxHistory,
+            onDelta: deltaController.add,
+          );
+        } catch (error, stack) {
+          streamError = error;
+          streamStack = stack;
+        } finally {
+          await deltaController.close();
+        }
+
+        if (streamError != null) {
+          await speechFuture;
+          Error.throwWithStackTrace(streamError, streamStack!);
+        }
+        final completed = streamedReply!;
+        reply = ModelReply(text: completed.text, model: completed.model);
+      }
+
       final assistantTurn = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
@@ -400,9 +472,10 @@ class _MomAppState extends State<MomApp> {
         metadata: {
           'model': reply.model,
           'knowledge_chars': knowledge.length,
-          'output_mode': 'orb_caption',
+          'output_mode': 'orb_caption_and_voice',
           'caption_display': 'immediate',
           'caption_persists': true,
+          'brain_transport': useLocal ? 'local_complete' : 'secure_sse',
         },
       );
       await _store.append(assistantTurn);
@@ -417,7 +490,11 @@ class _MomAppState extends State<MomApp> {
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
 
-      await _speakText(reply.text);
+      if (useLocal) {
+        await _speakText(reply.text);
+      } else if (speechFuture != null) {
+        await speechFuture;
+      }
 
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
@@ -425,6 +502,7 @@ class _MomAppState extends State<MomApp> {
         'response_characters': reply.text.length,
         'knowledge_characters': knowledge.length,
         'output_mode': 'orb_caption_and_voice',
+        'brain_transport': useLocal ? 'local_complete' : 'secure_sse',
       }));
     } catch (error) {
       if (_voiceState.state == MomVoiceState.thinking) {
@@ -476,6 +554,7 @@ class _MomAppState extends State<MomApp> {
         },
       ));
     } finally {
+      streamClient?.close();
       client.close();
     }
   }
