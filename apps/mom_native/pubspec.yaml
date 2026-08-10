@@ -1,7 +1,7 @@
 name: mom_native
 description: Native MOM client for Linux, Android, and iOS.
 publish_to: "none"
-version: 1.0.0+8
+version: 1.0.1+9
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -11,6 +11,7 @@ flutter:
   assets:
     - assets/runtime_prompt.md
     - assets/knowledge/mom_knowledge.jsonl
+    - assets/ui/
 
 dependencies:
   flutter:
