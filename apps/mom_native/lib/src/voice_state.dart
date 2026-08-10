@@ -48,7 +48,9 @@ class MomVoiceStateMachine {
     if (to == MomVoiceState.error) return true;
     return switch (from) {
       MomVoiceState.idle =>
-        to == MomVoiceState.listening || to == MomVoiceState.thinking,
+        to == MomVoiceState.listening ||
+            to == MomVoiceState.thinking ||
+            to == MomVoiceState.synthesizing,
       MomVoiceState.listening =>
         to == MomVoiceState.idle ||
             to == MomVoiceState.thinking ||
