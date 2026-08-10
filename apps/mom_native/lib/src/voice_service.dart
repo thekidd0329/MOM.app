@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -9,12 +10,15 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'tts_chunker.dart';
+
 const _modelName = 'kokoro-82m-q8_0.gguf';
 const _voiceName = 'kokoro-voice-af_heart.gguf';
 const _modelUrl =
     'https://huggingface.co/cstr/kokoro-82m-GGUF/resolve/main/kokoro-82m-q8_0.gguf?download=true';
 const _voiceUrl =
     'https://huggingface.co/cstr/kokoro-voices-GGUF/resolve/main/kokoro-voice-af_heart.gguf?download=true';
+const _maxSynthesizedAhead = 2;
 
 class MomVoiceException implements Exception {
   const MomVoiceException(this.stage, this.cause);
@@ -29,6 +33,7 @@ class MomVoiceException implements Exception {
 class MomVoiceService {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
+  final MomTtsChunker _chunker = const MomTtsChunker();
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
@@ -176,8 +181,8 @@ class MomVoiceService {
     void Function()? onSynthesisStart,
     void Function()? onPlaybackStart,
   }) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    final chunks = _chunker.chunk(text);
+    if (chunks.isEmpty) return;
 
     final generation = ++_speechGeneration;
     late final _VoiceAssets assets;
@@ -193,62 +198,109 @@ class MomVoiceService {
     if (generation != _speechGeneration) return;
 
     onSynthesisStart?.call();
-    final request = _SynthesisRequest(
-      modelPath: assets.model.path,
-      voicePath: assets.voice.path,
-      text: trimmed,
-    );
+    await _preparePlayerForGeneration();
+    final pending = <int, Future<Uint8List>>{};
 
-    late final Uint8List wav;
-    try {
-      wav = await Isolate.run(() => _synthesize(request));
-    } catch (error) {
-      final failure = MomVoiceException('synthesis', error);
-      _lastFailure = failure;
-      throw failure;
-    }
-    if (generation != _speechGeneration) return;
-    if (wav.length <= 44) {
-      final failure = const MomVoiceException(
-        'synthesis',
-        'Kokoro returned an empty audio buffer',
+    Future<Uint8List> synthesizeChunk(int index) async {
+      final request = _SynthesisRequest(
+        modelPath: assets.model.path,
+        voicePath: assets.voice.path,
+        text: chunks[index],
       );
-      _lastFailure = failure;
-      throw failure;
+      try {
+        final wav = await Isolate.run(() => _synthesize(request));
+        if (wav.length <= 44) {
+          throw const FormatException('Kokoro returned an empty audio buffer');
+        }
+        return wav;
+      } catch (error) {
+        throw MomVoiceException('synthesis', error);
+      }
     }
 
-    final output =
-        File('${assets.directory.path}/mom-response-$generation.wav');
+    for (var index = 0; index < chunks.length; index++) {
+      if (generation != _speechGeneration) return;
+
+      final prefetchEnd = math.min(
+        chunks.length,
+        index + _maxSynthesizedAhead,
+      );
+      for (var queued = index; queued < prefetchEnd; queued++) {
+        pending.putIfAbsent(queued, () => synthesizeChunk(queued));
+      }
+      if (pending.length > _maxSynthesizedAhead) {
+        final failure = const MomVoiceException(
+          'synthesis',
+          'Kokoro synthesis queue exceeded memory bound',
+        );
+        _lastFailure = failure;
+        throw failure;
+      }
+
+      late final Uint8List wav;
+      try {
+        wav = await pending.remove(index)!;
+      } catch (error) {
+        final failure = error is MomVoiceException
+            ? error
+            : MomVoiceException('synthesis', error);
+        _lastFailure = failure;
+        throw failure;
+      }
+      if (generation != _speechGeneration) return;
+
+      try {
+        await _playWav(
+          wav,
+          assets: assets,
+          generation: generation,
+          index: index,
+          onPlaybackStart: index == 0 ? onPlaybackStart : null,
+        );
+      } catch (error) {
+        final failure = error is MomVoiceException
+            ? error
+            : MomVoiceException('playback', error);
+        _lastFailure = failure;
+        throw failure;
+      }
+    }
+    _lastFailure = null;
+  }
+
+  Future<void> _preparePlayerForGeneration() async {
+    await _player.stop();
+    final previous = _playingFile;
+    if (previous != null && await previous.exists()) {
+      await previous.delete();
+    }
+    _playingFile = null;
+  }
+
+  Future<void> _playWav(
+    Uint8List wav, {
+    required _VoiceAssets assets,
+    required int generation,
+    required int index,
+    void Function()? onPlaybackStart,
+  }) async {
+    final output = File(
+      '${assets.directory.path}/mom-response-$generation-$index.wav',
+    );
     try {
       await output.writeAsBytes(wav, flush: true);
-      if (generation != _speechGeneration) {
-        if (await output.exists()) await output.delete();
-        return;
-      }
-
-      await _player.stop();
-      final previous = _playingFile;
-      if (previous != null && await previous.exists()) {
-        await previous.delete();
-      }
-      if (generation != _speechGeneration) {
-        if (await output.exists()) await output.delete();
-        return;
-      }
+      if (generation != _speechGeneration) return;
 
       final completed = _player.onPlayerComplete.first;
       onPlaybackStart?.call();
       await _player.play(DeviceFileSource(output.path));
       _playingFile = output;
-      _lastFailure = null;
       await completed.timeout(
         const Duration(minutes: 2),
         onTimeout: () {},
       );
     } catch (error) {
-      final failure = MomVoiceException('playback', error);
-      _lastFailure = failure;
-      throw failure;
+      throw MomVoiceException('playback', error);
     } finally {
       if (await output.exists()) await output.delete();
       if (identical(_playingFile, output)) _playingFile = null;
