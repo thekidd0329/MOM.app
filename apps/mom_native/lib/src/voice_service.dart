@@ -16,6 +16,16 @@ const _modelUrl =
 const _voiceUrl =
     'https://huggingface.co/cstr/kokoro-voices-GGUF/resolve/main/kokoro-voice-af_heart.gguf?download=true';
 
+class MomVoiceException implements Exception {
+  const MomVoiceException(this.stage, this.cause);
+
+  final String stage;
+  final Object cause;
+
+  @override
+  String toString() => 'MOM voice $stage failed: $cause';
+}
+
 class MomVoiceService {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
@@ -25,19 +35,30 @@ class MomVoiceService {
   int _speechGeneration = 0;
   File? _playingFile;
   void Function(bool listening)? _listeningState;
+  MomVoiceException? _lastFailure;
+
   bool get listening => _speech.isListening;
+  MomVoiceException? get lastFailure => _lastFailure;
 
   Future<bool> initialize() async {
-    _speechReady = await _speech.initialize(
-      onStatus: (status) {
-        if (status == 'listening') {
-          _listeningState?.call(true);
-        } else if (status == 'notListening' || status == 'done') {
+    try {
+      _speechReady = await _speech.initialize(
+        onStatus: (status) {
+          if (status == 'listening') {
+            _listeningState?.call(true);
+          } else if (status == 'notListening' || status == 'done') {
+            _listeningState?.call(false);
+          }
+        },
+        onError: (error) {
+          _lastFailure = MomVoiceException('speech_recognition', error);
           _listeningState?.call(false);
-        }
-      },
-      onError: (_) => _listeningState?.call(false),
-    );
+        },
+      );
+    } catch (error) {
+      _speechReady = false;
+      _lastFailure = MomVoiceException('speech_recognition', error);
+    }
     unawaited(_warmVoiceAssets());
     return _speechReady;
   }
@@ -45,8 +66,10 @@ class MomVoiceService {
   Future<void> _warmVoiceAssets() async {
     try {
       await _prepareVoiceAssets();
-    } catch (_) {
-      // Voice download failures must never block startup. speak() retries later.
+    } catch (error) {
+      _lastFailure = error is MomVoiceException
+          ? error
+          : MomVoiceException('assets', error);
     }
   }
 
@@ -57,10 +80,16 @@ class MomVoiceService {
     final future = _loadVoiceAssets();
     _assetsFuture = future;
     try {
-      return await future;
-    } catch (_) {
+      final assets = await future;
+      _lastFailure = null;
+      return assets;
+    } catch (error) {
       if (identical(_assetsFuture, future)) _assetsFuture = null;
-      rethrow;
+      final failure = error is MomVoiceException
+          ? error
+          : MomVoiceException('assets', error);
+      _lastFailure = failure;
+      throw failure;
     }
   }
 
@@ -73,6 +102,14 @@ class MomVoiceService {
     final voice = File('${voiceDir.path}/$_voiceName');
     await _downloadIfMissing(model, _modelUrl);
     await _downloadIfMissing(voice, _voiceUrl);
+
+    if (!await _isValidGguf(model)) {
+      throw const FormatException('Kokoro model is not a valid GGUF file');
+    }
+    if (!await _isValidGguf(voice)) {
+      throw const FormatException('Kokoro voice is not a valid GGUF file');
+    }
+
     return _VoiceAssets(model: model, voice: voice, directory: voiceDir);
   }
 
@@ -84,7 +121,13 @@ class MomVoiceService {
     _listeningState = onState;
     if (!_speechReady) {
       onState(false);
-      return;
+      final failure = _lastFailure ??
+          const MomVoiceException(
+            'speech_recognition',
+            'Speech recognition is unavailable on this device',
+          );
+      _lastFailure = failure;
+      throw failure;
     }
 
     onState(true);
@@ -102,9 +145,13 @@ class MomVoiceService {
         },
       );
       if (!_speech.isListening) onState(false);
-    } catch (_) {
+    } catch (error) {
       onState(false);
-      rethrow;
+      final failure = error is MomVoiceException
+          ? error
+          : MomVoiceException('speech_recognition', error);
+      _lastFailure = failure;
+      throw failure;
     }
   }
 
@@ -114,61 +161,123 @@ class MomVoiceService {
     _listeningState = null;
   }
 
-  Future<void> speak(String text) async {
+  Future<void> stopSpeaking() async {
+    _speechGeneration++;
+    await _player.stop();
+    final playing = _playingFile;
+    _playingFile = null;
+    if (playing != null && await playing.exists()) {
+      await playing.delete();
+    }
+  }
+
+  Future<void> speak(
+    String text, {
+    void Function()? onSynthesisStart,
+    void Function()? onPlaybackStart,
+  }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
     final generation = ++_speechGeneration;
-    final assets = await _prepareVoiceAssets();
+    late final _VoiceAssets assets;
+    try {
+      assets = await _prepareVoiceAssets();
+    } catch (error) {
+      final failure = error is MomVoiceException
+          ? error
+          : MomVoiceException('assets', error);
+      _lastFailure = failure;
+      throw failure;
+    }
     if (generation != _speechGeneration) return;
 
+    onSynthesisStart?.call();
     final request = _SynthesisRequest(
       modelPath: assets.model.path,
       voicePath: assets.voice.path,
       text: trimmed,
     );
-    final wav = await Isolate.run(() => _synthesize(request));
+
+    late final Uint8List wav;
+    try {
+      wav = await Isolate.run(() => _synthesize(request));
+    } catch (error) {
+      final failure = MomVoiceException('synthesis', error);
+      _lastFailure = failure;
+      throw failure;
+    }
     if (generation != _speechGeneration) return;
+    if (wav.length <= 44) {
+      final failure = const MomVoiceException(
+        'synthesis',
+        'Kokoro returned an empty audio buffer',
+      );
+      _lastFailure = failure;
+      throw failure;
+    }
 
     final output =
         File('${assets.directory.path}/mom-response-$generation.wav');
-    await output.writeAsBytes(wav, flush: true);
-    if (generation != _speechGeneration) {
+    try {
+      await output.writeAsBytes(wav, flush: true);
+      if (generation != _speechGeneration) {
+        if (await output.exists()) await output.delete();
+        return;
+      }
+
+      await _player.stop();
+      final previous = _playingFile;
+      if (previous != null && await previous.exists()) {
+        await previous.delete();
+      }
+      if (generation != _speechGeneration) {
+        if (await output.exists()) await output.delete();
+        return;
+      }
+
+      final completed = _player.onPlayerComplete.first;
+      onPlaybackStart?.call();
+      await _player.play(DeviceFileSource(output.path));
+      _playingFile = output;
+      _lastFailure = null;
+      await completed.timeout(
+        const Duration(minutes: 2),
+        onTimeout: () {},
+      );
+    } catch (error) {
+      final failure = MomVoiceException('playback', error);
+      _lastFailure = failure;
+      throw failure;
+    } finally {
       if (await output.exists()) await output.delete();
-      return;
+      if (identical(_playingFile, output)) _playingFile = null;
     }
+  }
 
-    await _player.stop();
-    final previous = _playingFile;
-    if (previous != null && await previous.exists()) {
-      await previous.delete();
-    }
-    if (generation != _speechGeneration) {
-      if (await output.exists()) await output.delete();
-      return;
-    }
-
-    final completed = _player.onPlayerComplete.first;
-    await _player.play(DeviceFileSource(output.path));
-    _playingFile = output;
-    await completed.timeout(
-      const Duration(minutes: 2),
-      onTimeout: () {},
-    );
-
-    if (generation == _speechGeneration && await output.exists()) {
-      await output.delete();
-      _playingFile = null;
+  Future<bool> _isValidGguf(File file) async {
+    if (!await file.exists() || await file.length() <= 1024) return false;
+    final handle = await file.open();
+    try {
+      final header = await handle.read(4);
+      return header.length == 4 &&
+          header[0] == 0x47 &&
+          header[1] == 0x47 &&
+          header[2] == 0x55 &&
+          header[3] == 0x46;
+    } finally {
+      await handle.close();
     }
   }
 
   Future<void> _downloadIfMissing(File file, String url) async {
-    if (await file.exists() && await file.length() > 1024) return;
+    if (await _isValidGguf(file)) return;
+    if (await file.exists()) await file.delete();
 
     final partial = File('${file.path}.part');
-    final backup = File('${file.path}.bad');
     final client = http.Client();
     try {
+      if (await partial.exists()) await partial.delete();
       final request = http.Request('GET', Uri.parse(url));
       final response = await client.send(request);
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -177,29 +286,13 @@ class MomVoiceService {
 
       final sink = partial.openWrite();
       await response.stream.pipe(sink);
-      if (!await partial.exists() || await partial.length() <= 1024) {
-        throw const FormatException('Downloaded voice asset is unexpectedly small');
+      if (!await _isValidGguf(partial)) {
+        throw const FormatException('Downloaded voice asset is not valid GGUF');
       }
-
-      if (await backup.exists()) await backup.delete();
-      final hadExisting = await file.exists();
-      if (hadExisting) await file.rename(backup.path);
-      try {
-        await partial.rename(file.path);
-        if (await backup.exists()) await backup.delete();
-      } catch (_) {
-        if (await file.exists()) await file.delete();
-        if (await backup.exists()) await backup.rename(file.path);
-        rethrow;
-      }
+      await partial.rename(file.path);
     } finally {
       client.close();
-      if (await partial.exists() && await file.exists()) {
-        await partial.delete();
-      }
-      if (await backup.exists() && await file.exists()) {
-        await backup.delete();
-      }
+      if (await partial.exists()) await partial.delete();
     }
   }
 
