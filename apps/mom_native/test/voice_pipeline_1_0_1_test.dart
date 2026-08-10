@@ -26,7 +26,8 @@ void main() {
     });
 
     test('final transcript remains a voice-originated turn', () {
-      expect(appSource, contains('onFinal: (text)'));
+      expect(appSource, contains('onFinal: _handleVoiceFinal'));
+      expect(appSource, contains('void _handleVoiceFinal(String text)'));
       expect(appSource, contains("_send(text, inputMode: 'voice')"));
       expect(appSource, contains("'input_mode': inputMode"));
     });
