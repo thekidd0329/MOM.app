@@ -185,38 +185,15 @@ class MomVoiceService {
     if (chunks.isEmpty) return;
 
     final generation = ++_speechGeneration;
-    late final _VoiceAssets assets;
-    try {
-      assets = await _prepareVoiceAssets();
-    } catch (error) {
-      final failure = error is MomVoiceException
-          ? error
-          : MomVoiceException('assets', error);
-      _lastFailure = failure;
-      throw failure;
-    }
+    final assets = await _requireAssets();
     if (generation != _speechGeneration) return;
 
     onSynthesisStart?.call();
     await _preparePlayerForGeneration();
     final pending = <int, Future<Uint8List>>{};
 
-    Future<Uint8List> synthesizeChunk(int index) async {
-      final request = _SynthesisRequest(
-        modelPath: assets.model.path,
-        voicePath: assets.voice.path,
-        text: chunks[index],
-      );
-      try {
-        final wav = await Isolate.run(() => _synthesize(request));
-        if (wav.length <= 44) {
-          throw const FormatException('Kokoro returned an empty audio buffer');
-        }
-        return wav;
-      } catch (error) {
-        throw MomVoiceException('synthesis', error);
-      }
-    }
+    Future<Uint8List> synthesizeChunk(int index) =>
+        _synthesizeText(chunks[index], assets);
 
     for (var index = 0; index < chunks.length; index++) {
       if (generation != _speechGeneration) return;
@@ -237,35 +214,110 @@ class MomVoiceService {
         throw failure;
       }
 
-      late final Uint8List wav;
-      try {
-        wav = await pending.remove(index)!;
-      } catch (error) {
-        final failure = error is MomVoiceException
-            ? error
-            : MomVoiceException('synthesis', error);
-        _lastFailure = failure;
-        throw failure;
-      }
+      final wav = await _awaitSynthesis(pending.remove(index)!);
       if (generation != _speechGeneration) return;
-
-      try {
-        await _playWav(
-          wav,
-          assets: assets,
-          generation: generation,
-          index: index,
-          onPlaybackStart: index == 0 ? onPlaybackStart : null,
-        );
-      } catch (error) {
-        final failure = error is MomVoiceException
-            ? error
-            : MomVoiceException('playback', error);
-        _lastFailure = failure;
-        throw failure;
-      }
+      await _playWav(
+        wav,
+        assets: assets,
+        generation: generation,
+        index: index,
+        onPlaybackStart: index == 0 ? onPlaybackStart : null,
+      );
     }
     _lastFailure = null;
+  }
+
+  Future<void> speakStream(
+    Stream<String> deltas, {
+    void Function()? onSynthesisStart,
+    void Function()? onPlaybackStart,
+  }) async {
+    final generation = ++_speechGeneration;
+    final assets = await _requireAssets();
+    if (generation != _speechGeneration) return;
+
+    await _preparePlayerForGeneration();
+    final assembler = MomStreamingTtsAssembler(chunker: _chunker);
+    var index = 0;
+    var synthesisStarted = false;
+
+    Future<void> speakChunk(String chunk) async {
+      if (generation != _speechGeneration || chunk.trim().isEmpty) return;
+      if (!synthesisStarted) {
+        synthesisStarted = true;
+        onSynthesisStart?.call();
+      }
+      final wav = await _awaitSynthesis(_synthesizeText(chunk, assets));
+      if (generation != _speechGeneration) return;
+      await _playWav(
+        wav,
+        assets: assets,
+        generation: generation,
+        index: index,
+        onPlaybackStart: index == 0 ? onPlaybackStart : null,
+      );
+      index++;
+    }
+
+    try {
+      await for (final delta in deltas) {
+        if (generation != _speechGeneration) return;
+        for (final chunk in assembler.add(delta)) {
+          await speakChunk(chunk);
+        }
+      }
+      for (final chunk in assembler.close()) {
+        await speakChunk(chunk);
+      }
+      _lastFailure = null;
+    } catch (error) {
+      final failure = error is MomVoiceException
+          ? error
+          : MomVoiceException('stream_playback', error);
+      _lastFailure = failure;
+      throw failure;
+    }
+  }
+
+  Future<_VoiceAssets> _requireAssets() async {
+    try {
+      return await _prepareVoiceAssets();
+    } catch (error) {
+      final failure = error is MomVoiceException
+          ? error
+          : MomVoiceException('assets', error);
+      _lastFailure = failure;
+      throw failure;
+    }
+  }
+
+  Future<Uint8List> _synthesizeText(String text, _VoiceAssets assets) async {
+    final request = _SynthesisRequest(
+      modelPath: assets.model.path,
+      voicePath: assets.voice.path,
+      text: text,
+    );
+    try {
+      final wav = await Isolate.run(() => _synthesize(request));
+      if (wav.length <= 44) {
+        throw const FormatException('Kokoro returned an empty audio buffer');
+      }
+      return wav;
+    } catch (error) {
+      throw MomVoiceException('synthesis', error);
+    }
+  }
+
+  Future<Uint8List> _awaitSynthesis(Future<Uint8List> synthesis) async {
+    try {
+      return await synthesis;
+    } catch (error) {
+      final failure = error is MomVoiceException
+          ? error
+          : MomVoiceException('synthesis', error);
+      _lastFailure = failure;
+      throw failure;
+    }
   }
 
   Future<void> _preparePlayerForGeneration() async {
