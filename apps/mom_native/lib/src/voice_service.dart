@@ -30,6 +30,27 @@ class MomVoiceException implements Exception {
   String toString() => 'MOM voice $stage failed: $cause';
 }
 
+bool looksLikeMomSpeakerEcho(String candidate, String momSpeech) {
+  List<String> words(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .toList(growable: false);
+
+  final heard = words(candidate);
+  final spoken = words(momSpeech);
+  if (heard.isEmpty || spoken.isEmpty) return false;
+
+  final heardPhrase = heard.join(' ');
+  final spokenPhrase = spoken.join(' ');
+  if (spokenPhrase.contains(heardPhrase)) return true;
+
+  final spokenSet = spoken.toSet();
+  final overlap = heard.where(spokenSet.contains).length / heard.length;
+  return heard.length >= 2 && overlap >= 0.80;
+}
+
 class MomVoiceService {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
@@ -38,9 +59,13 @@ class MomVoiceService {
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
   int _speechGeneration = 0;
+  int _bargeInGeneration = 0;
   File? _playingFile;
+  Completer<void>? _playbackCancelled;
   void Function(bool listening)? _listeningState;
+  void Function(Object error)? _bargeInError;
   MomVoiceException? _lastFailure;
+  bool _bargeInDetected = false;
 
   bool get listening => _speech.isListening;
   MomVoiceException? get lastFailure => _lastFailure;
@@ -56,8 +81,13 @@ class MomVoiceService {
           }
         },
         onError: (error) {
-          _lastFailure = MomVoiceException('speech_recognition', error);
-          _listeningState?.call(false);
+          final bargeError = _bargeInError;
+          if (bargeError != null) {
+            bargeError(error);
+          } else {
+            _lastFailure = MomVoiceException('speech_recognition', error);
+            _listeningState?.call(false);
+          }
         },
       );
     } catch (error) {
@@ -122,6 +152,7 @@ class MomVoiceService {
     required void Function(String text) onFinal,
     required void Function(bool listening) onState,
   }) async {
+    await stopBargeInDetection();
     if (!_speechReady) await initialize();
     _listeningState = onState;
     if (!_speechReady) {
@@ -160,7 +191,61 @@ class MomVoiceService {
     }
   }
 
+  Future<void> listenForBargeIn({
+    required String Function() expectedMomSpeech,
+    required void Function(String partialText) onDetected,
+    required void Function(String finalText) onFinal,
+    required void Function(Object error) onError,
+  }) async {
+    if (!_speechReady) await initialize();
+    if (!_speechReady) return;
+
+    final generation = ++_bargeInGeneration;
+    _bargeInDetected = false;
+    _bargeInError = onError;
+    _listeningState = null;
+
+    try {
+      if (_speech.isListening) await _speech.stop();
+      await _speech.listen(
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: false,
+        ),
+        onResult: (result) {
+          if (generation != _bargeInGeneration) return;
+          final text = result.recognizedWords.trim();
+          if (text.isEmpty) return;
+
+          final echo = looksLikeMomSpeakerEcho(text, expectedMomSpeech());
+          if (!_bargeInDetected && !echo) {
+            final wordCount = text.split(RegExp(r'\s+')).length;
+            if (wordCount >= 2 || text.length >= 8) {
+              _bargeInDetected = true;
+              onDetected(text);
+            }
+          }
+
+          if (_bargeInDetected && result.finalResult) {
+            onFinal(text);
+          }
+        },
+      );
+    } catch (error) {
+      if (generation == _bargeInGeneration) onError(error);
+    }
+  }
+
+  Future<void> stopBargeInDetection() async {
+    _bargeInGeneration++;
+    _bargeInDetected = false;
+    _bargeInError = null;
+    if (_speech.isListening) await _speech.stop();
+  }
+
   Future<void> stopListening() async {
+    _bargeInGeneration++;
+    _bargeInError = null;
     await _speech.stop();
     _listeningState?.call(false);
     _listeningState = null;
@@ -168,6 +253,10 @@ class MomVoiceService {
 
   Future<void> stopSpeaking() async {
     _speechGeneration++;
+    final cancellation = _playbackCancelled;
+    if (cancellation != null && !cancellation.isCompleted) {
+      cancellation.complete();
+    }
     await _player.stop();
     final playing = _playingFile;
     _playingFile = null;
@@ -321,12 +410,17 @@ class MomVoiceService {
   }
 
   Future<void> _preparePlayerForGeneration() async {
+    final previousCancellation = _playbackCancelled;
+    if (previousCancellation != null && !previousCancellation.isCompleted) {
+      previousCancellation.complete();
+    }
     await _player.stop();
     final previous = _playingFile;
     if (previous != null && await previous.exists()) {
       await previous.delete();
     }
     _playingFile = null;
+    _playbackCancelled = Completer<void>();
   }
 
   Future<void> _playWav(
@@ -344,10 +438,11 @@ class MomVoiceService {
       if (generation != _speechGeneration) return;
 
       final completed = _player.onPlayerComplete.first;
+      final cancelled = _playbackCancelled?.future ?? Future<void>.value();
       onPlaybackStart?.call();
       await _player.play(DeviceFileSource(output.path));
       _playingFile = output;
-      await completed.timeout(
+      await Future.any<void>([completed, cancelled]).timeout(
         const Duration(minutes: 2),
         onTimeout: () {},
       );
@@ -402,8 +497,14 @@ class MomVoiceService {
 
   Future<void> dispose() async {
     _speechGeneration++;
+    _bargeInGeneration++;
+    final cancellation = _playbackCancelled;
+    if (cancellation != null && !cancellation.isCompleted) {
+      cancellation.complete();
+    }
     _listeningState?.call(false);
     _listeningState = null;
+    _bargeInError = null;
     await _speech.stop();
     await _player.stop();
     await _player.dispose();
