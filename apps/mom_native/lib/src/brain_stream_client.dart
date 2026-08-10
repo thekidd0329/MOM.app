@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'sync_client.dart';
+import 'voice_continuity.dart';
 
 class MomBrainStreamClient {
   MomBrainStreamClient({
@@ -62,9 +63,19 @@ class MomBrainStreamClient {
     int maxHistory = 8,
   }) async {
     await _sync.ensureRegistered();
+
+    final effectiveHistory = List<Map<String, String>>.from(history);
+    final interrupted = MomVoiceContinuity.consume();
+    if (interrupted != null) {
+      effectiveHistory.add({
+        'role': 'assistant',
+        'content': interrupted.toAssistantHistoryContext(),
+      });
+    }
+
     try {
       return await _chatOnce(
-        history: history,
+        history: effectiveHistory,
         userText: userText,
         onDelta: onDelta,
         temperature: temperature,
@@ -77,7 +88,7 @@ class MomBrainStreamClient {
       await _sync.clearCloudRegistration();
       await _sync.ensureRegistered();
       return _chatOnce(
-        history: history,
+        history: effectiveHistory,
         userText: userText,
         onDelta: onDelta,
         temperature: temperature,
