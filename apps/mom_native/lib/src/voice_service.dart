@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'partial_redirector.dart';
 import 'tts_chunker.dart';
 import 'voice_continuity.dart';
 
@@ -57,6 +58,7 @@ class MomVoiceService {
   final SpeechToText _speech = SpeechToText();
   final AudioPlayer _player = AudioPlayer();
   final MomTtsChunker _chunker = const MomTtsChunker();
+  final MomPartialRedirector _redirector = const MomPartialRedirector();
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
@@ -70,6 +72,9 @@ class MomVoiceService {
   void Function(Object error)? _bargeInError;
   MomVoiceException? _lastFailure;
   bool _bargeInDetected = false;
+  bool _redirectInFlight = false;
+  DateTime _redirectCooldownUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  String _lastMomSpeech = '';
 
   String _generatedSpeechText = '';
   final List<String> _completedSpokenChunks = <String>[];
@@ -186,14 +191,36 @@ class MomVoiceService {
           cancelOnError: true,
         ),
         onResult: (result) {
-          if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
-            onFinal(result.recognizedWords.trim());
+          final text = result.recognizedWords.trim();
+          if (text.isEmpty) return;
+
+          if (!result.finalResult &&
+              !_redirectInFlight &&
+              DateTime.now().isAfter(_redirectCooldownUntil)) {
+            final redirect = _redirector.redirectFor(
+              lastMomSpeech: _lastMomSpeech,
+              partialTranscript: text,
+            );
+            if (redirect != null) {
+              _redirectInFlight = true;
+              unawaited(_interruptOffTrackUser(
+                redirect: redirect,
+                onFinal: onFinal,
+                onState: onState,
+              ));
+              return;
+            }
+          }
+
+          if (result.finalResult && !_redirectInFlight) {
+            onFinal(text);
             onState(false);
           }
         },
       );
-      if (!_speech.isListening) onState(false);
+      if (!_speech.isListening && !_redirectInFlight) onState(false);
     } catch (error) {
+      if (_redirectInFlight) return;
       onState(false);
       final failure = error is MomVoiceException
           ? error
@@ -201,6 +228,30 @@ class MomVoiceService {
       _lastFailure = failure;
       throw failure;
     }
+  }
+
+  Future<void> _interruptOffTrackUser({
+    required String redirect,
+    required void Function(String text) onFinal,
+    required void Function(bool listening) onState,
+  }) async {
+    try {
+      if (_speech.isListening) await _speech.stop();
+      onState(false);
+      _redirectCooldownUntil = DateTime.now().add(const Duration(seconds: 20));
+      try {
+        await speak(redirect, automaticBargeIn: false);
+      } catch (error) {
+        _lastFailure = error is MomVoiceException
+            ? error
+            : MomVoiceException('redirect_speech', error);
+      }
+    } finally {
+      _redirectInFlight = false;
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await listen(onFinal: onFinal, onState: onState);
   }
 
   Future<void> listenForBargeIn({
@@ -361,9 +412,7 @@ class MomVoiceService {
       final durationMicros = _activeChunkDuration.inMicroseconds;
       var fraction = 0.0;
       if (started != null && durationMicros > 0) {
-        fraction = DateTime.now()
-                .difference(started)
-                .inMicroseconds /
+        fraction = DateTime.now().difference(started).inMicroseconds /
             durationMicros;
       }
       fraction = fraction.clamp(0.0, 1.0);
@@ -400,6 +449,7 @@ class MomVoiceService {
     String text, {
     void Function()? onSynthesisStart,
     void Function()? onPlaybackStart,
+    bool automaticBargeIn = true,
   }) async {
     final chunks = _chunker.chunk(text);
     if (chunks.isEmpty) return;
@@ -446,13 +496,16 @@ class MomVoiceService {
         onPlaybackStart: index == 0
             ? () {
                 onPlaybackStart?.call();
-                unawaited(_armAutomaticBargeIn(() => text));
+                if (automaticBargeIn) {
+                  unawaited(_armAutomaticBargeIn(() => text));
+                }
               }
             : null,
       );
     }
     if (generation == _speechGeneration) {
       await stopBargeInDetection();
+      _lastMomSpeech = _normalizeSpeech(text);
       _clearSpeechTracking();
     }
     _lastFailure = null;
@@ -514,6 +567,7 @@ class MomVoiceService {
       }
       if (generation == _speechGeneration) {
         await stopBargeInDetection();
+        _lastMomSpeech = _normalizeSpeech(expectedSpeech.toString());
         _clearSpeechTracking();
       }
       _lastFailure = null;
