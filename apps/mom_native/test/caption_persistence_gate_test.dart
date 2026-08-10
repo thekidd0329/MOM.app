@@ -60,4 +60,18 @@ void main() {
     expect(find.text('Thinking...'), findsOneWidget);
     expect(find.text(reply), findsOneWidget);
   });
+
+  testWidgets('MOM caption stays visible when the text composer is open',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await pumpHome(tester, busy: false, listening: false);
+    expect(find.text(reply), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Text MOM'));
+    await tester.pump();
+
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text(reply), findsOneWidget);
+  });
 }
