@@ -14,6 +14,7 @@ import 'partial_redirector.dart';
 import 'transcript_quality.dart';
 import 'tts_chunker.dart';
 import 'voice_continuity.dart';
+import 'voice_listen_guard.dart';
 
 const _modelName = 'kokoro-82m-q8_0.gguf';
 const _voiceName = 'kokoro-voice-af_heart.gguf';
@@ -23,6 +24,7 @@ const _voiceUrl =
     'https://huggingface.co/cstr/kokoro-voices-GGUF/resolve/main/kokoro-voice-af_heart.gguf?download=true';
 const _maxSynthesizedAhead = 2;
 const _kokoroSampleRate = 24000;
+const _normalListenTimeout = Duration(seconds: 35);
 
 class MomVoiceException implements Exception {
   const MomVoiceException(this.stage, this.cause);
@@ -61,6 +63,7 @@ class MomVoiceService {
   final MomTtsChunker _chunker = const MomTtsChunker();
   final MomPartialRedirector _redirector = const MomPartialRedirector();
   final MomTranscriptQuality _transcriptQuality = const MomTranscriptQuality();
+  final MomListenSessionGuard _listenGuard = MomListenSessionGuard();
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
@@ -96,6 +99,7 @@ class MomVoiceService {
           if (status == 'listening') {
             _listeningState?.call(true);
           } else if (status == 'notListening' || status == 'done') {
+            _listenGuard.invalidate();
             _listeningState?.call(false);
           }
         },
@@ -104,6 +108,7 @@ class MomVoiceService {
           if (bargeError != null) {
             bargeError(error);
           } else {
+            _listenGuard.invalidate();
             _lastFailure = MomVoiceException('speech_recognition', error);
             _listeningState?.call(false);
           }
@@ -172,6 +177,9 @@ class MomVoiceService {
     required void Function(bool listening) onState,
   }) async {
     await stopBargeInDetection();
+    if (_playingFile != null) {
+      await stopSpeaking(preserveContinuity: true);
+    }
     if (!_speechReady) await initialize();
     _conversationFinal = onFinal;
     _conversationListeningState = onState;
@@ -187,6 +195,24 @@ class MomVoiceService {
       throw failure;
     }
 
+    late final int listenGeneration;
+    listenGeneration = _listenGuard.begin(
+      timeout: _normalListenTimeout,
+      onTimeout: () {
+        unawaited(() async {
+          if (!_listenGuard.isCurrent(listenGeneration)) return;
+          _lastFailure = const MomVoiceException(
+            'speech_timeout',
+            'No final transcript arrived before the listening timeout',
+          );
+          _listenGuard.complete(listenGeneration);
+          _lastMeaningfulPartial = '';
+          if (_speech.isListening) await _speech.stop();
+          onState(false);
+        }());
+      },
+    );
+
     onState(true);
     try {
       await _speech.listen(
@@ -195,6 +221,7 @@ class MomVoiceService {
           cancelOnError: true,
         ),
         onResult: (result) {
+          if (!_listenGuard.isCurrent(listenGeneration)) return;
           final text = result.recognizedWords.trim();
           if (text.isEmpty) return;
 
@@ -208,6 +235,7 @@ class MomVoiceService {
                 partialTranscript: text,
               );
               if (redirect != null) {
+                _listenGuard.complete(listenGeneration);
                 _redirectInFlight = true;
                 unawaited(_interruptOffTrackUser(
                   redirect: redirect,
@@ -225,23 +253,28 @@ class MomVoiceService {
             previousPartial: _lastMeaningfulPartial,
           );
           if (shouldClarify) {
+            _listenGuard.complete(listenGeneration);
             _clarificationInFlight = true;
             unawaited(_clarifyTranscript(onFinal: onFinal, onState: onState));
             return;
           }
 
+          _listenGuard.complete(listenGeneration);
           _lastMeaningfulPartial = '';
           onFinal(text);
           onState(false);
         },
       );
       if (!_speech.isListening &&
+          _listenGuard.isCurrent(listenGeneration) &&
           !_redirectInFlight &&
           !_clarificationInFlight) {
+        _listenGuard.complete(listenGeneration);
         onState(false);
       }
     } catch (error) {
       if (_redirectInFlight || _clarificationInFlight) return;
+      _listenGuard.complete(listenGeneration);
       onState(false);
       final failure = error is MomVoiceException
           ? error
@@ -306,6 +339,7 @@ class MomVoiceService {
     required void Function(String finalText) onFinal,
     required void Function(Object error) onError,
   }) async {
+    _listenGuard.invalidate();
     if (!_speechReady) await initialize();
     if (!_speechReady) return;
 
@@ -380,6 +414,7 @@ class MomVoiceService {
   }
 
   Future<void> stopListening() async {
+    _listenGuard.invalidate();
     _bargeInGeneration++;
     _bargeInError = null;
     _lastMeaningfulPartial = '';
@@ -760,6 +795,7 @@ class MomVoiceService {
   Future<void> dispose() async {
     _speechGeneration++;
     _bargeInGeneration++;
+    _listenGuard.dispose();
     final cancellation = _playbackCancelled;
     if (cancellation != null && !cancellation.isCompleted) {
       cancellation.complete();
