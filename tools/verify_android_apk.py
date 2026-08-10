@@ -6,9 +6,9 @@ Usage:
 
 The staged JNI directory is expected to contain the lib*.so files copied into
 android/app/src/main/jniLibs/arm64-v8a before the Flutter release build. MOM's
-required network/microphone declarations are verified before the APK is
-accepted. If no manifest path is supplied, it is derived from the staged JNI
-location.
+required network/microphone declarations and speech-recognition discovery query
+are verified before the APK is accepted. If no manifest path is supplied, it
+is derived from the staged JNI location.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
-
 
 _REQUIRED_MANIFEST_DECLARATIONS = (
     "android.permission.INTERNET",
