@@ -41,12 +41,10 @@ void main() {
       ),
     );
 
-    await tester.pump();
+    // Drain the caption's zero-delay continuation without waiting on the orb's
+    // intentionally repeating animation.
+    await tester.pump(const Duration(milliseconds: 1));
   }
-
-  tearDown(() async {
-    TestWidgetsFlutterBinding.ensureInitialized();
-  });
 
   testWidgets('MOM home launches with the trademark electric orb',
       (tester) async {
