@@ -1,0 +1,43 @@
+name: Workload 1 Phase 9 Test Log
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/workload1-phase9-test-log.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Capture full Flutter test output
+        id: tests
+        working-directory: apps/mom_native
+        shell: bash
+        run: |
+          set +e
+          flutter test --reporter expanded > "$RUNNER_TEMP/phase9-flutter-test.log" 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          tail -n 120 "$RUNNER_TEMP/phase9-flutter-test.log"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workload1-phase9-flutter-test-log
+          path: ${{ runner.temp }}/phase9-flutter-test.log
+          if-no-files-found: error
+      - name: Preserve test conclusion
+        if: always()
+        run: exit ${{ steps.tests.outputs.status }}

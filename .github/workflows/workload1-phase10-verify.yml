@@ -1,0 +1,53 @@
+name: Workload 1 Phase 10 Verify
+
+on:
+  push:
+    branches:
+      - update/1.0.1-ui-voice
+    paths:
+      - "apps/mom_native/**"
+      - ".github/workflows/workload1-phase10-verify.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: update/1.0.1-ui-voice
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve packages
+        working-directory: apps/mom_native
+        run: flutter pub get
+      - name: Analyze
+        working-directory: apps/mom_native
+        run: flutter analyze --no-fatal-infos
+      - name: Test all voice and app contracts
+        working-directory: apps/mom_native
+        run: flutter test
+      - name: Publish Phase 10 green marker to update branch
+        run: |
+          set -euo pipefail
+          mkdir -p builds
+          cat > builds/workload1-phase10-green.json <<EOF
+          {
+            "status": "GREEN",
+            "workload": 1,
+            "phase": 10,
+            "verified_commit": "$GITHUB_SHA",
+            "checks": ["flutter_analyze", "flutter_test"],
+            "apk_built": false
+          }
+          EOF
+          git config user.name "MOM Phase Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add builds/workload1-phase10-green.json
+          git commit -m "Workload 1 Phase 10: record green hands-free verification" || exit 0
+          git push origin HEAD:update/1.0.1-ui-voice
