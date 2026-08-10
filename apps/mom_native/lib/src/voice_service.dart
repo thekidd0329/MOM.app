@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import 'partial_redirector.dart';
+import 'transcript_quality.dart';
 import 'tts_chunker.dart';
 import 'voice_continuity.dart';
 
@@ -59,6 +60,7 @@ class MomVoiceService {
   final AudioPlayer _player = AudioPlayer();
   final MomTtsChunker _chunker = const MomTtsChunker();
   final MomPartialRedirector _redirector = const MomPartialRedirector();
+  final MomTranscriptQuality _transcriptQuality = const MomTranscriptQuality();
 
   bool _speechReady = false;
   Future<_VoiceAssets>? _assetsFuture;
@@ -73,8 +75,10 @@ class MomVoiceService {
   MomVoiceException? _lastFailure;
   bool _bargeInDetected = false;
   bool _redirectInFlight = false;
+  bool _clarificationInFlight = false;
   DateTime _redirectCooldownUntil = DateTime.fromMillisecondsSinceEpoch(0);
   String _lastMomSpeech = '';
+  String _lastMeaningfulPartial = '';
 
   String _generatedSpeechText = '';
   final List<String> _completedSpokenChunks = <String>[];
@@ -194,33 +198,50 @@ class MomVoiceService {
           final text = result.recognizedWords.trim();
           if (text.isEmpty) return;
 
-          if (!result.finalResult &&
-              !_redirectInFlight &&
-              DateTime.now().isAfter(_redirectCooldownUntil)) {
-            final redirect = _redirector.redirectFor(
-              lastMomSpeech: _lastMomSpeech,
-              partialTranscript: text,
-            );
-            if (redirect != null) {
-              _redirectInFlight = true;
-              unawaited(_interruptOffTrackUser(
-                redirect: redirect,
-                onFinal: onFinal,
-                onState: onState,
-              ));
-              return;
+          if (!result.finalResult) {
+            _lastMeaningfulPartial = text;
+            if (!_redirectInFlight &&
+                !_clarificationInFlight &&
+                DateTime.now().isAfter(_redirectCooldownUntil)) {
+              final redirect = _redirector.redirectFor(
+                lastMomSpeech: _lastMomSpeech,
+                partialTranscript: text,
+              );
+              if (redirect != null) {
+                _redirectInFlight = true;
+                unawaited(_interruptOffTrackUser(
+                  redirect: redirect,
+                  onFinal: onFinal,
+                  onState: onState,
+                ));
+              }
             }
+            return;
           }
 
-          if (result.finalResult && !_redirectInFlight) {
-            onFinal(text);
-            onState(false);
+          if (_redirectInFlight || _clarificationInFlight) return;
+          final shouldClarify = _transcriptQuality.shouldClarify(
+            finalTranscript: text,
+            previousPartial: _lastMeaningfulPartial,
+          );
+          if (shouldClarify) {
+            _clarificationInFlight = true;
+            unawaited(_clarifyTranscript(onFinal: onFinal, onState: onState));
+            return;
           }
+
+          _lastMeaningfulPartial = '';
+          onFinal(text);
+          onState(false);
         },
       );
-      if (!_speech.isListening && !_redirectInFlight) onState(false);
+      if (!_speech.isListening &&
+          !_redirectInFlight &&
+          !_clarificationInFlight) {
+        onState(false);
+      }
     } catch (error) {
-      if (_redirectInFlight) return;
+      if (_redirectInFlight || _clarificationInFlight) return;
       onState(false);
       final failure = error is MomVoiceException
           ? error
@@ -248,6 +269,31 @@ class MomVoiceService {
       }
     } finally {
       _redirectInFlight = false;
+      _lastMeaningfulPartial = '';
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await listen(onFinal: onFinal, onState: onState);
+  }
+
+  Future<void> _clarifyTranscript({
+    required void Function(String text) onFinal,
+    required void Function(bool listening) onState,
+  }) async {
+    try {
+      if (_speech.isListening) await _speech.stop();
+      onState(false);
+      _redirectCooldownUntil = DateTime.now().add(const Duration(seconds: 10));
+      try {
+        await speak('Wait, what did you just say?', automaticBargeIn: false);
+      } catch (error) {
+        _lastFailure = error is MomVoiceException
+            ? error
+            : MomVoiceException('clarification_speech', error);
+      }
+    } finally {
+      _clarificationInFlight = false;
+      _lastMeaningfulPartial = '';
     }
 
     await Future<void>.delayed(const Duration(milliseconds: 80));
@@ -336,6 +382,7 @@ class MomVoiceService {
   Future<void> stopListening() async {
     _bargeInGeneration++;
     _bargeInError = null;
+    _lastMeaningfulPartial = '';
     await _speech.stop();
     _listeningState?.call(false);
     _listeningState = null;
@@ -722,6 +769,7 @@ class MomVoiceService {
     _conversationFinal = null;
     _conversationListeningState = null;
     _bargeInError = null;
+    _lastMeaningfulPartial = '';
     _clearSpeechTracking();
     await _speech.stop();
     await _player.stop();
