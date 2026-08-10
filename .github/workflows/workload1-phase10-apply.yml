@@ -1,0 +1,35 @@
+name: Workload 1 Phase 10 Apply
+
+on:
+  push:
+    branches:
+      - update/1.0.1-ui-voice
+    paths:
+      - "tools/apply_phase10_handsfree.py"
+      - ".github/workflows/workload1-phase10-apply.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: update/1.0.1-ui-voice
+          fetch-depth: 0
+      - name: Apply guarded Phase 10 patch
+        run: python3 tools/apply_phase10_handsfree.py
+      - name: Commit branch-only voice changes
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps/mom_native/lib/src/voice_service.dart apps/mom_native/lib/main.dart; then
+            echo "Phase 10 already applied."
+            exit 0
+          fi
+          git config user.name "MOM Phase Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps/mom_native/lib/src/voice_service.dart apps/mom_native/lib/main.dart
+          git commit -m "Workload 1 Phase 10: true hands-free voice loop"
+          git push origin HEAD:update/1.0.1-ui-voice
