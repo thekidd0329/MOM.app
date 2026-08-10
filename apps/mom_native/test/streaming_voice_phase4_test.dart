@@ -39,12 +39,14 @@ void main() {
     expect(source, contains('isForbiddenModel'));
   });
 
-  test('Kokoro starts from deltas before the completed reply path', () async {
+  test('Kokoro starts from generation-safe deltas before completed reply', () async {
     final app = await File('lib/main.dart').readAsString();
     final voice = await File('lib/src/voice_service.dart').readAsString();
 
     expect(app, contains('speechFuture = _speakDeltaStream(deltaController.stream)'));
-    expect(app, contains('onDelta: deltaController.add'));
+    expect(app, contains('onDelta: (delta)'));
+    expect(app, contains('turnGeneration == _conversationGeneration'));
+    expect(app, contains('deltaController?.add(delta)'));
     expect(app, contains("'brain_transport': useLocal ? 'local_complete' : 'secure_sse'"));
     expect(voice, contains('Future<void> speakStream('));
     expect(voice, contains('MomStreamingTtsAssembler'));
