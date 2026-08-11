@@ -67,6 +67,10 @@ class _MomAppState extends State<MomApp> {
     try {
       final config = await _configStore.load();
       _config = config;
+      _sync = MomSyncClient(syncUrl: config.syncUrl);
+      final runtime = await _sync!.refreshRuntimeConfig();
+      config.temperature = runtime.temperature;
+      config.maxHistory = runtime.maxHistory;
       try {
         _systemPrompt = await rootBundle.loadString('assets/runtime_prompt.md');
       } catch (_) {}
@@ -89,7 +93,6 @@ class _MomAppState extends State<MomApp> {
       }
 
       await _knowledge.load(repoRoot: config.repoRoot);
-      _sync = MomSyncClient(syncUrl: config.syncUrl);
       _sessionId = await _store.currentSessionId();
       _turns = await _store.loadSession(_sessionId, limit: 200);
       _captionTurns = _turns
