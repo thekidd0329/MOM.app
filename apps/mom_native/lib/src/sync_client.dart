@@ -103,13 +103,13 @@ class MomRuntimeConfig {
       schemaVersion: (value['schema_version'] as num?)?.round() ?? 1,
       release: '${value['release'] ?? '1.1.0'}',
       temperature: temperature is num
-          ? temperature.toDouble().clamp(0, 2)
+          ? temperature.toDouble().clamp(0, 2).toDouble()
           : safeDefaults.temperature,
       maxHistory: maxHistory is num
-          ? maxHistory.round().clamp(2, 200)
+          ? maxHistory.round().clamp(2, 200).toInt()
           : safeDefaults.maxHistory,
       requestTimeoutSeconds: timeout is num
-          ? timeout.round().clamp(10, 600)
+          ? timeout.round().clamp(10, 600).toInt()
           : safeDefaults.requestTimeoutSeconds,
       rawMemoryLocation: '${value['raw_memory_location'] ?? 'device_only'}',
       cloudRawChatStorage: value['cloud_raw_chat_storage'] == true,
