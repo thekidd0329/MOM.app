@@ -1,0 +1,14 @@
+{
+  "status": "GREEN",
+  "workload": 1,
+  "phases": 10,
+  "verified_commit": "b4f71a707a609e579444bc4f699dcd84cdcb0fe1",
+  "checks": [
+    "flutter_analyze",
+    "flutter_test",
+    "mom_brain_health",
+    "mom_brain_stream_authority"
+  ],
+  "apk_built": false,
+  "physical_hands_free_proof": "pending_final_1.0.1_apk"
+}
