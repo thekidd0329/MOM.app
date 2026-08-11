@@ -161,7 +161,7 @@ def complete_onboarding(evidence: Path) -> None:
 def resolve_apk(path: Path) -> Path:
     if path.is_file() and path.suffix == ".apk":
         return path
-    matches = sorted(path.glob("*.apk"))
+    matches = sorted(path.rglob("*.apk"))
     if len(matches) != 1:
         raise RuntimeError(f"Expected one APK in {path}, found {len(matches)}")
     return matches[0]

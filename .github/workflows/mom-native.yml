@@ -200,6 +200,11 @@ jobs:
           } > "$BUILD_DIR/MOM_BUILD.txt"
           grep -E '^sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
 
+          ARTIFACT_DIR="$BUILD_DIR/release-artifact"
+          mkdir -p "$ARTIFACT_DIR"
+          cp "$OUTPUT_APK" "$ARTIFACT_DIR/$APK_NAME"
+          cp "$BUILD_DIR/MOM_BUILD.txt" "$ARTIFACT_DIR/MOM_BUILD.txt"
+
           echo "artifact_name=mom-android-1.1.0-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
@@ -207,9 +212,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
-          path: |
-            ${{ runner.temp }}/mom_android/build/app/outputs/flutter-apk/${{ steps.identity.outputs.apk_name }}
-            ${{ runner.temp }}/mom_android/MOM_BUILD.txt
+          path: ${{ runner.temp }}/mom_android/release-artifact/
           if-no-files-found: error
           retention-days: 14
 
