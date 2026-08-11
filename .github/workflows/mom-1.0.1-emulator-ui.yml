@@ -1,6 +1,10 @@
 name: MOM 1.0.1 Emulator UI
 
 on:
+  push:
+    branches: [release/1.0.1-ui]
+    paths:
+      - ".github/workflows/mom-1.0.1-emulator-ui.yml"
   pull_request:
     branches: [main]
     paths:
