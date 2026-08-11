@@ -40,6 +40,8 @@ def main() -> None:
     require("run_mom_emulator_ui.py" in workflow, "emulator must test the uploaded APK")
     require("verify_android_apk.py" in workflow, "native APK verification is missing")
     require("release-artifact/" in workflow, "APK and manifest must upload from one flat artifact directory")
+    require("sudo chmod 0666 /dev/kvm" in workflow, "emulator KVM access must be enabled explicitly")
+    require("disable-animations: true" in workflow, "emulator system animations must be disabled for deterministic UI proof")
     require("android-arm64,android-x64" in workflow, "universal ARM64/x86_64 target is missing")
     require("git push origin" not in all_workflows, "a workflow still writes commits into a source branch")
     require("builds/latest_android.json" not in all_workflows, "build status must be an artifact, not a source commit")
