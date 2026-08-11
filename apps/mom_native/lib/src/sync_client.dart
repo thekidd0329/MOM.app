@@ -51,6 +51,92 @@ class BrainProbeResult {
   final int latencyMs;
 }
 
+class MomRuntimeConfig {
+  const MomRuntimeConfig({
+    required this.schemaVersion,
+    required this.release,
+    required this.temperature,
+    required this.maxHistory,
+    required this.requestTimeoutSeconds,
+    required this.rawMemoryLocation,
+    required this.cloudRawChatStorage,
+    required this.bundledRuntimePromptRequired,
+    required this.bundledRepositoryKnowledgeRequired,
+    required this.updatedAt,
+    required this.source,
+  });
+
+  final int schemaVersion;
+  final String release;
+  final double temperature;
+  final int maxHistory;
+  final int requestTimeoutSeconds;
+  final String rawMemoryLocation;
+  final bool cloudRawChatStorage;
+  final bool bundledRuntimePromptRequired;
+  final bool bundledRepositoryKnowledgeRequired;
+  final String updatedAt;
+  final String source;
+
+  static const safeDefaults = MomRuntimeConfig(
+    schemaVersion: 1,
+    release: '1.1.0',
+    temperature: 0.72,
+    maxHistory: 8,
+    requestTimeoutSeconds: 300,
+    rawMemoryLocation: 'device_only',
+    cloudRawChatStorage: false,
+    bundledRuntimePromptRequired: false,
+    bundledRepositoryKnowledgeRequired: false,
+    updatedAt: '',
+    source: 'safe_defaults',
+  );
+
+  factory MomRuntimeConfig.fromJson(
+    Map<String, dynamic> value, {
+    required String source,
+  }) {
+    final temperature = value['temperature'];
+    final maxHistory = value['max_history'];
+    final timeout = value['request_timeout_seconds'];
+    return MomRuntimeConfig(
+      schemaVersion: (value['schema_version'] as num?)?.round() ?? 1,
+      release: '${value['release'] ?? '1.1.0'}',
+      temperature: temperature is num
+          ? temperature.toDouble().clamp(0, 2)
+          : safeDefaults.temperature,
+      maxHistory: maxHistory is num
+          ? maxHistory.round().clamp(2, 200)
+          : safeDefaults.maxHistory,
+      requestTimeoutSeconds: timeout is num
+          ? timeout.round().clamp(10, 600)
+          : safeDefaults.requestTimeoutSeconds,
+      rawMemoryLocation: '${value['raw_memory_location'] ?? 'device_only'}',
+      cloudRawChatStorage: value['cloud_raw_chat_storage'] == true,
+      bundledRuntimePromptRequired:
+          value['bundled_runtime_prompt_required'] == true,
+      bundledRepositoryKnowledgeRequired:
+          value['bundled_repository_knowledge_required'] == true,
+      updatedAt: '${value['updated_at'] ?? ''}',
+      source: source,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'schema_version': schemaVersion,
+        'release': release,
+        'temperature': temperature,
+        'max_history': maxHistory,
+        'request_timeout_seconds': requestTimeoutSeconds,
+        'raw_memory_location': rawMemoryLocation,
+        'cloud_raw_chat_storage': cloudRawChatStorage,
+        'bundled_runtime_prompt_required': bundledRuntimePromptRequired,
+        'bundled_repository_knowledge_required':
+            bundledRepositoryKnowledgeRequired,
+        'updated_at': updatedAt,
+      };
+}
+
 class MomSyncClient {
   MomSyncClient({
     required this.syncUrl,
@@ -66,6 +152,7 @@ class MomSyncClient {
   static const _installationKey = 'mom_installation_id';
   static const _tokenKey = 'mom_installation_token';
   static const _deviceKey = 'mom_device_id';
+  static const _runtimeConfigKey = 'mom_runtime_config_v1';
   static final Map<String, Future<void>> _registrationFlights = {};
 
   String _serviceUrl(String service) {
@@ -210,6 +297,57 @@ class MomSyncClient {
         endpoint: brainUrl,
         timeout: timeout,
       );
+    }
+  }
+
+  Future<MomRuntimeConfig> cachedRuntimeConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(_runtimeConfigKey);
+    if (cached == null || cached.isEmpty) return MomRuntimeConfig.safeDefaults;
+    try {
+      final decoded = jsonDecode(cached);
+      if (decoded is! Map<String, dynamic>) {
+        return MomRuntimeConfig.safeDefaults;
+      }
+      return MomRuntimeConfig.fromJson(decoded, source: 'cache');
+    } catch (_) {
+      return MomRuntimeConfig.safeDefaults;
+    }
+  }
+
+  Future<MomRuntimeConfig> runtimeConfig({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    await ensureRegistered(appVersion: '1.1.0');
+    final result = await _post(
+      {'action': 'runtime_config'},
+      authenticated: true,
+      timeout: timeout,
+    );
+    final raw = result['config'];
+    if (raw is! Map<String, dynamic>) {
+      throw const MomCloudException(
+        service: 'mom-sync',
+        code: 'invalid_runtime_config',
+        message: 'MOM runtime configuration was not a JSON object.',
+        retryable: true,
+      );
+    }
+    final config = MomRuntimeConfig.fromJson({
+      ...raw,
+      'updated_at': result['updated_at'],
+    }, source: 'server');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_runtimeConfigKey, jsonEncode(config.toJson()));
+    return config;
+  }
+
+  Future<MomRuntimeConfig> refreshRuntimeConfig() async {
+    final cached = await cachedRuntimeConfig();
+    try {
+      return await runtimeConfig();
+    } catch (_) {
+      return cached;
     }
   }
 
