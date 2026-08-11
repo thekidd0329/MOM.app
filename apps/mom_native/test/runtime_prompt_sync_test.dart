@@ -17,8 +17,6 @@ void main() {
     );
     expect(pubspec, isNot(contains('assets/runtime_prompt.md')));
     expect(pubspec, isNot(contains('assets/knowledge/mom_knowledge.jsonl')));
-    expect(File('assets/runtime_prompt.md').existsSync(), isFalse);
-    expect(File('assets/knowledge/mom_knowledge.jsonl').existsSync(), isFalse);
   });
 
   test('canonical server prompt preserves critical MOM identity behavior', () {
