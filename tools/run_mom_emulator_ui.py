@@ -113,7 +113,7 @@ def activate_with_keyboard(evidence: Path, needle: str, *, max_tabs: int = 12) -
         root = dump_ui(evidence, "mom-keyboard-focus.xml")
         node = find_node(root, needle)
         if node is not None and node.attrib.get("focused") == "true":
-            adb("shell", "input", "keyevent", "66")
+            adb("shell", "input", "keyevent", "23")
             time.sleep(0.8)
             return
         adb("shell", "input", "keyevent", "61")
