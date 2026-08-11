@@ -1,11 +1,10 @@
-# MOM UI assets
+# MOM UI
 
-`2546.png` is the canonical trademarked MOM plasma artwork for the 1.0.1 home screen.
+MOM 1.0.1 uses the live Android `PlasmaOrbView` as the production orb.
 
-Rules:
-- Use the exact original `2546.png` file.
-- Do not redraw, regenerate, trace, vectorize, procedurally recreate, recolor, or approximate it.
-- Animation code may draw lightning/glow outside or over the rendered asset without modifying the source file.
-- The production asset path is `assets/ui/2546.png`.
+The visual reference image remains useful for matching the plasma look, but the production orb is not a static image widget.
 
-This directory is registered as a Flutter asset directory so the original file can be dropped in without another pubspec change.
+Runtime pieces:
+- `apps/mom_native/android/app/src/main/kotlin/app/mom/mom_native/PlasmaOrbView.kt` — Matt's animated plasma implementation.
+- `apps/mom_native/android/app/src/main/kotlin/app/mom/mom_native/MainActivity.kt` — registers the Flutter platform view as `mom/plasma_orb`.
+- `apps/mom_native/lib/src/mom_home_screen.dart` — hosts the native orb in a compact square and draws the startup strikes that zap MOM's controls into place.
