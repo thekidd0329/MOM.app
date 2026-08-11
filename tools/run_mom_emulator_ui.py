@@ -108,6 +108,19 @@ def wait_for_node(
     raise RuntimeError(f"Timed out waiting for UI label {needle!r}. Last UI: {last_labels[-1200:]}")
 
 
+def activate_with_keyboard(evidence: Path, needle: str, *, max_tabs: int = 12) -> None:
+    for _ in range(max_tabs + 1):
+        root = dump_ui(evidence, "mom-keyboard-focus.xml")
+        node = find_node(root, needle)
+        if node is not None and node.attrib.get("focused") == "true":
+            adb("shell", "input", "keyevent", "66")
+            time.sleep(0.8)
+            return
+        adb("shell", "input", "keyevent", "61")
+        time.sleep(0.25)
+    raise RuntimeError(f"Could not focus UI label {needle!r} with keyboard navigation")
+
+
 def center(node: ET.Element) -> tuple[int, int]:
     match = BOUNDS.fullmatch(node.attrib.get("bounds", ""))
     if match is None:
@@ -230,7 +243,11 @@ def main() -> int:
         screenshot(evidence, "mom-home-live-plasma.png")
 
         tap_text(evidence, "Settings")
-        wait_for_node(evidence, "MOM settings", timeout=20)
+        try:
+            wait_for_node(evidence, "MOM settings", timeout=3)
+        except RuntimeError:
+            activate_with_keyboard(evidence, "Settings")
+            wait_for_node(evidence, "MOM settings", timeout=20)
         dump_ui(evidence, "mom-settings.xml")
         screenshot(evidence, "mom-settings.png")
         print(f"MOM emulator UI verified against {apk.name}")
