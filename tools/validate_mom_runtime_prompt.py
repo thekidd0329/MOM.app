@@ -4,7 +4,7 @@
 from pathlib import Path
 import sys
 
-PROMPT_PATH = Path("core_llm/mom_identity/runtime_prompt.md")
+PROMPT_PATH = Path("core_llm/mamallama/runtime_prompt.md")
 
 REQUIRED_CONTRACT = (
     "You are MOM.",

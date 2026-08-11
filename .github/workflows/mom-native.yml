@@ -1,4 +1,4 @@
-name: MOM Native
+name: MOM 1.1.0 Unified Android
 
 on:
   workflow_dispatch:
@@ -7,113 +7,272 @@ on:
     paths:
       - "apps/mom_native/**"
       - "core_llm/**"
-      - "learning_model/**"
-      - "docs/**"
-      - "tools/build_mom_knowledge.py"
+      - "supabase/functions/mom-sync/**"
+      - "supabase/migrations/**"
       - "tools/ensure_android_manifest.py"
+      - "tools/run_mom_emulator_ui.py"
+      - "tools/validate_mom_runtime_prompt.py"
       - "tools/verify_android_apk.py"
-      - "tools/verify_mom_1_0_1_ui_contract.py"
+      - "tools/verify_live_mom_runtime_config.py"
+      - "tools/verify_mom_1_1_0_release_contract.py"
+      - "tools/verify_mom_1_1_0_ui_contract.py"
       - ".github/workflows/mom-native.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/mom_native/**"
       - "core_llm/**"
-      - "learning_model/**"
-      - "docs/**"
-      - "tools/build_mom_knowledge.py"
+      - "supabase/functions/mom-sync/**"
+      - "supabase/migrations/**"
       - "tools/ensure_android_manifest.py"
+      - "tools/run_mom_emulator_ui.py"
+      - "tools/validate_mom_runtime_prompt.py"
       - "tools/verify_android_apk.py"
-      - "tools/verify_mom_1_0_1_ui_contract.py"
+      - "tools/verify_live_mom_runtime_config.py"
+      - "tools/verify_mom_1_1_0_release_contract.py"
+      - "tools/verify_mom_1_1_0_ui_contract.py"
       - ".github/workflows/mom-native.yml"
+
+concurrency:
+  group: mom-android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Tests and variable validation
+  source:
+    name: Source, voice, and server contracts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify MOM 1.0.1 UI contract
-        run: python3 tools/verify_mom_1_0_1_ui_contract.py
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-      - name: Build repository knowledge bundle
-        run: python3 tools/build_mom_knowledge.py
+
+      - name: Record Flutter toolchain
+        run: flutter --version
+
+      - name: Verify unified release ownership
+        run: python3 tools/verify_mom_1_1_0_release_contract.py
+
+      - name: Verify live plasma UI contract
+        run: python3 tools/verify_mom_1_1_0_ui_contract.py
+
+      - name: Verify canonical MOM prompt contract
+        run: python3 tools/validate_mom_runtime_prompt.py
+
+      - name: Verify server runtime source contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('supabase/functions/mom-sync/index.ts').read_text()
+          migration = Path('supabase/migrations/20260810021810_mom_110_server_runtime_config.sql').read_text()
+          assert 'npm:@supabase/supabase-js@2.112.3' in source
+          assert 'version: 6' in source
+          assert 'action === "runtime_config"' in source
+          assert '.eq("config_key", "mobile.runtime")' in source
+          assert "'prompt_authority', 'mom-brain'" in migration
+          assert "'model_authority', 'mom-brain'" in migration
+          assert "'raw_memory_location', 'device_only'" in migration
+          assert "'cloud_raw_chat_storage', false" in migration
+          print('MOM server runtime source contract OK')
+          PY
+
       - name: Resolve Dart packages
         working-directory: apps/mom_native
         run: flutter pub get
+
       - name: Static analysis
         working-directory: apps/mom_native
         run: flutter analyze --no-fatal-infos
-      - name: Unit tests
+
+      - name: Complete Flutter test suite
         working-directory: apps/mom_native
         run: flutter test
-      - name: Supabase MOM sync health
-        run: |
-          set -euo pipefail
-          body="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"action":"health"}' https://ghdgrcwvpsxbarxmopdp.supabase.co/functions/v1/mom-sync)"
-          echo "$body"
-          echo "$body" | grep -q '"ok":true'
 
-  android:
-    name: Android APK
-    needs: test
+      - name: Verify live authenticated runtime config
+        run: python3 tools/verify_live_mom_runtime_config.py
+
+  build:
+    name: Build and verify the one APK
+    needs: source
     runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      apk_name: ${{ steps.identity.outputs.apk_name }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-      - name: Build repository knowledge bundle
-        run: python3 tools/build_mom_knowledge.py
-      - name: Generate native Android shell
+
+      - name: Generate the single Android build workspace
+        shell: bash
         run: |
           set -euo pipefail
-          flutter create --platforms=android --org app.mom --project-name mom_native "$RUNNER_TEMP/mom_android"
-          rm -rf "$RUNNER_TEMP/mom_android/lib" "$RUNNER_TEMP/mom_android/test"
-          cp -a apps/mom_native/lib "$RUNNER_TEMP/mom_android/lib"
-          cp -a apps/mom_native/test "$RUNNER_TEMP/mom_android/test"
-          cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_android/pubspec.yaml"
-          rm -rf "$RUNNER_TEMP/mom_android/assets"
-          cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
-          cp -a apps/mom_native/android/. "$RUNNER_TEMP/mom_android/android/"
-          git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$RUNNER_TEMP/crispasr"
-          ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$RUNNER_TEMP/crispasr/build-android.sh" --abi arm64-v8a
-          CRISP_BUILD="$RUNNER_TEMP/crispasr/build-android/arm64-v8a"
-          CRISP_DEST="$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
-          mkdir -p "$CRISP_DEST"
-          mapfile -t crisp_libs < <(find "$CRISP_BUILD" -type f -name 'lib*.so' -print)
-          if [ "${#crisp_libs[@]}" -eq 0 ]; then
-            echo "::error::CrispASR Android build produced no shared libraries"
-            exit 1
-          fi
-          cp "${crisp_libs[@]}" "$CRISP_DEST/"
-          test -f "$CRISP_DEST/libcrispasr.so"
-          echo "Packaged ${#crisp_libs[@]} CrispASR Android libraries"
-          python3 tools/ensure_android_manifest.py "$RUNNER_TEMP/mom_android/android/app/src/main/AndroidManifest.xml"
-      - name: Verify generated Android manifest
-        run: python3 tools/ensure_android_manifest.py --check "$RUNNER_TEMP/mom_android/android/app/src/main/AndroidManifest.xml"
-      - name: Build Android release APK
+          BUILD_DIR="$RUNNER_TEMP/mom_android"
+          flutter create --platforms=android --org app.mom --project-name mom_native "$BUILD_DIR"
+          rm -rf "$BUILD_DIR/lib" "$BUILD_DIR/test" "$BUILD_DIR/assets"
+          cp -a apps/mom_native/lib "$BUILD_DIR/lib"
+          cp -a apps/mom_native/test "$BUILD_DIR/test"
+          cp -a apps/mom_native/assets "$BUILD_DIR/assets"
+          cp apps/mom_native/pubspec.yaml "$BUILD_DIR/pubspec.yaml"
+          cp -a apps/mom_native/android/. "$BUILD_DIR/android/"
+          rm -f "$BUILD_DIR/test/widget_test.dart"
+          python3 tools/ensure_android_manifest.py "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
+
+      - name: Build CrispASR for both release ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          CRISP_ROOT="$RUNNER_TEMP/crispasr"
+          BUILD_DIR="$RUNNER_TEMP/mom_android"
+          git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$CRISP_ROOT"
+
+          for ABI in arm64-v8a x86_64; do
+            ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$CRISP_ROOT/build-android.sh" --abi "$ABI"
+            SOURCE="$CRISP_ROOT/build-android/$ABI"
+            DESTINATION="$BUILD_DIR/android/app/src/main/jniLibs/$ABI"
+            mkdir -p "$DESTINATION"
+            find "$SOURCE" -type f -name 'lib*.so' -exec cp '{}' "$DESTINATION/" ';'
+            test -f "$DESTINATION/libcrispasr.so"
+            echo "Staged $(find "$DESTINATION" -type f -name 'lib*.so' | wc -l) native libraries for $ABI"
+          done
+
+      - name: Resolve release dependencies
         working-directory: ${{ runner.temp }}/mom_android
-        run: flutter pub get && flutter build apk --release --target-platform android-arm64
-      - name: Preserve Android 1.0.1 APK
+        run: flutter pub get
+
+      - name: Build universal release APK once
+        working-directory: ${{ runner.temp }}/mom_android
+        run: flutter build apk --release --target-platform android-arm64,android-x64
+
+      - name: Verify APK identity and native contents
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/mom_android"
+          SOURCE_APK="$BUILD_DIR/build/app/outputs/flutter-apk/app-release.apk"
+          MANIFEST="$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
+          APP_VERSION="$(awk '/^version:/ {print $2; exit}' apps/mom_native/pubspec.yaml)"
+          VERSION_NAME="${APP_VERSION%%+*}"
+          VERSION_CODE="${APP_VERSION##*+}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          SAFE_VERSION="${APP_VERSION/+/-}"
+          APK_NAME="MOM-${SAFE_VERSION}-${SHORT_SHA}-release.apk"
+          OUTPUT_APK="$BUILD_DIR/build/app/outputs/flutter-apk/$APK_NAME"
+
+          test -s "$SOURCE_APK"
+          cp "$SOURCE_APK" "$OUTPUT_APK"
+          python3 tools/verify_android_apk.py "$OUTPUT_APK" "$BUILD_DIR/android/app/src/main/jniLibs/arm64-v8a" "$MANIFEST"
+          python3 tools/verify_android_apk.py "$OUTPUT_APK" "$BUILD_DIR/android/app/src/main/jniLibs/x86_64" "$MANIFEST"
+
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          PACKAGE_LINE="$("$AAPT" dump badging "$OUTPUT_APK" | grep '^package: ' | head -n 1)"
+          printf '%s\n' "$PACKAGE_LINE"
+          printf '%s\n' "$PACKAGE_LINE" | grep -F "name='app.mom.mom_native'"
+          printf '%s\n' "$PACKAGE_LINE" | grep -F "versionName='$VERSION_NAME'"
+          printf '%s\n' "$PACKAGE_LINE" | grep -F "versionCode='$VERSION_CODE'"
+
+          APK_BYTES="$(stat -c '%s' "$OUTPUT_APK")"
+          APK_SHA256="$(sha256sum "$OUTPUT_APK" | awk '{print $1}')"
+          {
+            printf 'MOM Android 1.1.0\n'
+            printf 'version=%s\n' "$APP_VERSION"
+            printf 'commit=%s\n' "$GITHUB_SHA"
+            printf 'apk=%s\n' "$APK_NAME"
+            printf 'bytes=%s\n' "$APK_BYTES"
+            printf 'sha256=%s\n' "$APK_SHA256"
+            flutter --version | head -n 1
+          } > "$BUILD_DIR/MOM_BUILD.txt"
+          grep -E '^sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
+
+          echo "artifact_name=mom-android-1.1.0-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: mom-android-apk
-          path: ${{ runner.temp }}/mom_android/build/app/outputs/flutter-apk/app-release.apk
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: |
+            ${{ runner.temp }}/mom_android/build/app/outputs/flutter-apk/${{ steps.identity.outputs.apk_name }}
+            ${{ runner.temp }}/mom_android/MOM_BUILD.txt
           if-no-files-found: error
-      - name: Verify Android release APK
+          retention-days: 14
+
+  emulator:
+    name: Verify that exact APK in Android
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: apk-artifact
+
+      - name: Complete onboarding and verify home/settings UI
+        uses: ReactiveCircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: false
+          script: python3 tools/run_mom_emulator_ui.py apk-artifact ui-evidence
+
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mom-1.1.0-ui-evidence-${{ github.sha }}
+          path: ui-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    name: Publish the tested APK
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, emulator]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: apk-artifact
+
+      - name: Publish to the private APK download repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
         run: |
-          python3 tools/verify_android_apk.py \
-            "$RUNNER_TEMP/mom_android/build/app/outputs/flutter-apk/app-release.apk" \
-            "$RUNNER_TEMP/mom_android/android/app/src/main/jniLibs/arm64-v8a"
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "APK_REPO_TOKEN is not configured; verified artifact remains in this run."
+            exit 0
+          fi
+          APK="apk-artifact/${{ needs.build.outputs.apk_name }}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          test -s "$APK"
+          test -s apk-artifact/MOM_BUILD.txt
+          gh release create "mom-1.1.0-$SHORT_SHA" \
+            "$APK#MOM.apk" \
+            "apk-artifact/MOM_BUILD.txt#MOM_BUILD.txt" \
+            --repo thekidd0329/Cleantestapp \
+            --title "MOM 1.1.0 ($SHORT_SHA)" \
+            --notes "Unified MOM 1.1.0 APK. The uploaded binary passed source, native-library, identity, and emulator UI verification."

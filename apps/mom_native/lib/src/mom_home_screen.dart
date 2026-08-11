@@ -357,7 +357,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                       start: 0.68,
                       origin: Alignment.bottomLeft,
                       child: const Text(
-                        'Version 1.0.1',
+                        'Version 1.1.0',
                         style: TextStyle(
                           color: _plasmaPurple,
                           fontWeight: FontWeight.w600,

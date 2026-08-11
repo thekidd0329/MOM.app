@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
+import 'src/brain_stream_client.dart';
 import 'src/config.dart';
 import 'src/diagnostics.dart';
 import 'src/knowledge.dart';
@@ -19,6 +19,7 @@ import 'src/startup_discovery/discovery_store.dart';
 import 'src/startup_intro_screen.dart';
 import 'src/sync_client.dart';
 import 'src/voice_service.dart';
+import 'src/voice_state.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,9 +42,12 @@ class _MomAppState extends State<MomApp> {
   final MomMicrophoneProbe _micProbe = MomMicrophoneProbe();
   final StartupIntroStore _startupIntroStore = StartupIntroStore();
   final MomVoiceService _voice = MomVoiceService();
+  final MomVoiceStateMachine _voiceState = MomVoiceStateMachine();
 
   MomConfig? _config;
   MomSyncClient? _sync;
+  MomBrainStreamClient? _activeBrainStream;
+  int _conversationGeneration = 0;
   String _systemPrompt =
       'MOM exists to act in the direct best interest of her user; every response should serve that purpose.';
   String _sessionId = '';
@@ -53,9 +57,10 @@ class _MomAppState extends State<MomApp> {
   MomMicrophoneStatus _microphone = const MomMicrophoneStatus.unknown();
   bool _booting = true;
   bool _startupIntroComplete = false;
-  bool _busy = false;
-  bool _listening = false;
   String _status = 'starting';
+
+  bool get _busy => _voiceState.blocksInput;
+  bool get _listening => _voiceState.listening;
 
   @override
   void initState() {
@@ -63,14 +68,158 @@ class _MomAppState extends State<MomApp> {
     _bootstrap();
   }
 
+  void _setVoiceState(MomVoiceState next, {String? status}) {
+    if (_voiceState.state == next) {
+      if (status != null && mounted) setState(() => _status = status);
+      return;
+    }
+    void apply() {
+      _voiceState.transition(next);
+      _status = status ?? _voiceState.label;
+    }
+
+    if (mounted) {
+      setState(apply);
+    } else {
+      apply();
+    }
+  }
+
+  void _recoverVoiceState({String status = 'online'}) {
+    void apply() {
+      _voiceState.recover();
+      _status = status;
+    }
+
+    if (mounted) {
+      setState(apply);
+    } else {
+      apply();
+    }
+  }
+
+  Future<void> _voiceFailed(Object error, {required String fallbackStage}) async {
+    _voice.disarmHandsFree();
+    final stage = error is MomVoiceException ? error.stage : fallbackStage;
+    if (_voiceState.state != MomVoiceState.error) {
+      _setVoiceState(
+        MomVoiceState.error,
+        status: 'Voice error · text still works',
+      );
+    } else if (mounted) {
+      setState(() => _status = 'Voice error · text still works');
+    }
+    await _safeEvent('voice_error', payload: {
+      'stage': stage,
+      'error_type': error.runtimeType.toString(),
+    });
+  }
+
+  void _handleVoiceListeningState(bool value) {
+    if (value) {
+      if (_voiceState.state == MomVoiceState.speaking ||
+          _voiceState.state == MomVoiceState.synthesizing) {
+        _setVoiceState(MomVoiceState.interrupted);
+      }
+      if (_voiceState.state == MomVoiceState.error) {
+        _recoverVoiceState();
+      }
+      if (_voiceState.state == MomVoiceState.idle ||
+          _voiceState.state == MomVoiceState.interrupted) {
+        _setVoiceState(MomVoiceState.listening);
+      }
+      return;
+    }
+
+    if (_voiceState.state == MomVoiceState.listening) {
+      _setVoiceState(MomVoiceState.idle);
+    }
+  }
+
+  void _handleVoiceFinal(String text) {
+    if (text.trim().isEmpty) return;
+    if (_voiceState.state == MomVoiceState.speaking ||
+        _voiceState.state == MomVoiceState.synthesizing) {
+      _setVoiceState(MomVoiceState.interrupted);
+    }
+    if (_voiceState.state == MomVoiceState.interrupted) {
+      _setVoiceState(MomVoiceState.listening);
+    }
+    if (_voiceState.state == MomVoiceState.listening) {
+      _setVoiceState(MomVoiceState.idle);
+    }
+    unawaited(_send(text, inputMode: 'voice'));
+  }
+
+  Future<void> _speakText(String text) async {
+    if (text.trim().isEmpty) return;
+    if (_voiceState.state == MomVoiceState.error) {
+      _recoverVoiceState();
+    }
+    if (_voiceState.state == MomVoiceState.idle ||
+        _voiceState.state == MomVoiceState.thinking) {
+      _setVoiceState(MomVoiceState.synthesizing);
+    } else if (_voiceState.state != MomVoiceState.synthesizing) {
+      return;
+    }
+
+    try {
+      await _voice.speak(
+        text,
+        onSynthesisStart: () {
+          if (_voiceState.state == MomVoiceState.thinking ||
+              _voiceState.state == MomVoiceState.idle) {
+            _setVoiceState(MomVoiceState.synthesizing);
+          }
+        },
+        onPlaybackStart: () {
+          if (_voiceState.state == MomVoiceState.synthesizing) {
+            _setVoiceState(MomVoiceState.speaking);
+          }
+        },
+      );
+      if (_voiceState.state == MomVoiceState.speaking ||
+          _voiceState.state == MomVoiceState.synthesizing) {
+        _setVoiceState(MomVoiceState.idle);
+      }
+    } catch (error) {
+      await _voiceFailed(error, fallbackStage: 'output');
+    }
+  }
+
+  Future<void> _speakDeltaStream(Stream<String> deltas) async {
+    try {
+      await _voice.speakStream(
+        deltas,
+        onSynthesisStart: () {
+          if (_voiceState.state == MomVoiceState.thinking ||
+              _voiceState.state == MomVoiceState.idle) {
+            _setVoiceState(MomVoiceState.synthesizing);
+          }
+        },
+        onPlaybackStart: () {
+          if (_voiceState.state == MomVoiceState.synthesizing) {
+            _setVoiceState(MomVoiceState.speaking);
+          }
+        },
+      );
+      if (_voiceState.state == MomVoiceState.speaking ||
+          _voiceState.state == MomVoiceState.synthesizing) {
+        _setVoiceState(MomVoiceState.idle);
+      }
+    } catch (error) {
+      await _voiceFailed(error, fallbackStage: 'stream_playback');
+    }
+  }
+
   Future<void> _bootstrap() async {
     try {
       final config = await _configStore.load();
       _config = config;
-      try {
-        _systemPrompt = await rootBundle.loadString('assets/runtime_prompt.md');
-      } catch (_) {}
-
+      _sync = MomSyncClient(syncUrl: config.syncUrl);
+      final runtime = await _sync!.refreshRuntimeConfig();
+      config.temperature = runtime.temperature;
+      config.maxHistory = runtime.maxHistory;
       _startupIntroComplete = await _startupIntroStore.isComplete();
       if (_startupIntroComplete) {
         final savedName = await _startupIntroStore.savedName();
@@ -89,7 +238,6 @@ class _MomAppState extends State<MomApp> {
       }
 
       await _knowledge.load(repoRoot: config.repoRoot);
-      _sync = MomSyncClient(syncUrl: config.syncUrl);
       _sessionId = await _store.currentSessionId();
       _turns = await _store.loadSession(_sessionId, limit: 200);
       _captionTurns = _turns
@@ -212,34 +360,78 @@ class _MomAppState extends State<MomApp> {
   }
 
   Future<void> _toggleListening() async {
-    if (_listening) {
+    if (_voiceState.state == MomVoiceState.listening) {
       await _voice.stopListening();
-      if (mounted) setState(() => _listening = false);
+      _setVoiceState(MomVoiceState.idle);
+      return;
+    }
+
+    if (_voiceState.state == MomVoiceState.error) {
+      _recoverVoiceState();
+    }
+
+    if (_voiceState.state == MomVoiceState.speaking ||
+        _voiceState.state == MomVoiceState.synthesizing) {
+      _setVoiceState(MomVoiceState.interrupted);
+      await _voice.stopSpeaking(preserveContinuity: true);
+    }
+
+    if (_voiceState.state != MomVoiceState.idle &&
+        _voiceState.state != MomVoiceState.interrupted) {
       return;
     }
 
     await _probeMicrophone(true);
-    if (!_microphone.permissionGranted) return;
-    await _voice.listen(
-      onState: (value) {
-        if (mounted) setState(() => _listening = value);
-      },
-      onFinal: (text) {
-        if (mounted) setState(() => _listening = false);
-        unawaited(_send(text));
-      },
-    );
+    if (!_microphone.permissionGranted) {
+      if (_voiceState.state == MomVoiceState.interrupted) {
+        _setVoiceState(MomVoiceState.idle);
+      }
+      if (mounted) setState(() => _status = 'Microphone permission needed');
+      return;
+    }
+
+    if (_voiceState.state == MomVoiceState.interrupted) {
+      _setVoiceState(MomVoiceState.listening);
+    } else {
+      _setVoiceState(MomVoiceState.listening);
+    }
+
+    try {
+      await _voice.listen(
+        onState: _handleVoiceListeningState,
+        onFinal: _handleVoiceFinal,
+      );
+    } catch (error) {
+      await _voiceFailed(error, fallbackStage: 'speech_recognition');
+    }
   }
 
-  Future<void> _send(String text) async {
+  Future<void> _send(String text, {String inputMode = 'text'}) async {
     final config = _config;
-    if (config == null || _busy || text.trim().isEmpty) return;
+    final sync = _sync;
+    if (config == null || sync == null || text.trim().isEmpty) return;
+    if (inputMode != 'voice') _voice.disarmHandsFree();
+
+    if (_voiceState.state == MomVoiceState.listening) {
+      await _voice.stopListening();
+      _setVoiceState(MomVoiceState.idle);
+    }
+    if (_voiceState.state == MomVoiceState.error) {
+      _recoverVoiceState();
+    }
+    if (_voiceState.state != MomVoiceState.idle) return;
+
     final issues = config.validate().where((e) => e.fatal).toList();
     if (issues.isNotEmpty) {
       setState(() => _status = 'settings need attention');
       await _openSettings();
       return;
     }
+
+    final turnGeneration = ++_conversationGeneration;
+    final previousStream = _activeBrainStream;
+    _activeBrainStream = null;
+    previousStream?.close();
 
     final prior = List<ChatTurn>.from(_turns);
     final userTurn = ChatTurn(
@@ -248,33 +440,87 @@ class _MomAppState extends State<MomApp> {
       content: text.trim(),
       createdAt: DateTime.now(),
       metadata: {
-        'input_mode': 'text',
+        'input_mode': inputMode,
         'microphone': _microphone.toJson(),
       },
     );
-    setState(() {
-      _busy = true;
-      _status = 'thinking';
+    _setVoiceState(MomVoiceState.thinking);
+    if (mounted) {
+      setState(() => _turns = [..._turns, userTurn]);
+    } else {
       _turns = [..._turns, userTurn];
-    });
+    }
     await _store.append(userTurn);
     unawaited(_safeSyncTurn(userTurn));
     unawaited(_safeEvent('chat_sent', payload: {
       'characters': text.length,
-      'input_mode': 'text',
+      'input_mode': inputMode,
       'microphone': _microphone.toJson(),
     }));
 
     final started = DateTime.now();
     final client = ModelClient(config.copy());
+    MomBrainStreamClient? streamClient;
+    StreamController<String>? deltaController;
+    Future<void>? speechFuture;
     try {
-      final knowledge = _knowledge.contextFor(text);
-      final reply = await client.chat(
-        systemPrompt: _systemPrompt,
-        history: prior,
-        userText: text.trim(),
-        knowledgeContext: knowledge,
-      );
+      final useLocal = Platform.isLinux && config.useLocalLlama;
+      final knowledge = useLocal ? _knowledge.contextFor(text) : '';
+      ModelReply reply;
+
+      if (useLocal) {
+        reply = await client.chat(
+          systemPrompt: _systemPrompt,
+          history: prior,
+          userText: text.trim(),
+          knowledgeContext: knowledge,
+        );
+      } else {
+        streamClient = MomBrainStreamClient(
+          syncUrl: config.syncUrl,
+          syncClient: sync,
+        );
+        _activeBrainStream = streamClient;
+        deltaController = StreamController<String>();
+        speechFuture = _speakDeltaStream(deltaController.stream);
+
+        Object? streamError;
+        StackTrace? streamStack;
+        BrainReply? streamedReply;
+        try {
+          streamedReply = await streamClient.chat(
+            history: prior
+                .where((turn) =>
+                    turn.role == 'user' || turn.role == 'assistant')
+                .map((turn) => {'role': turn.role, 'content': turn.content})
+                .toList(growable: false),
+            userText: text.trim(),
+            temperature: config.temperature,
+            maxHistory: config.maxHistory,
+            onDelta: (delta) {
+              if (turnGeneration == _conversationGeneration &&
+                  !(deltaController?.isClosed ?? true)) {
+                deltaController?.add(delta);
+              }
+            },
+          );
+        } catch (error, stack) {
+          streamError = error;
+          streamStack = stack;
+        } finally {
+          await deltaController.close();
+        }
+
+        if (turnGeneration != _conversationGeneration) return;
+        if (streamError != null) {
+          await speechFuture;
+          Error.throwWithStackTrace(streamError, streamStack!);
+        }
+        final completed = streamedReply!;
+        reply = ModelReply(text: completed.text, model: completed.model);
+      }
+
+      if (turnGeneration != _conversationGeneration) return;
       final assistantTurn = ChatTurn(
         sessionId: _sessionId,
         role: 'assistant',
@@ -283,29 +529,45 @@ class _MomAppState extends State<MomApp> {
         metadata: {
           'model': reply.model,
           'knowledge_chars': knowledge.length,
-          'output_mode': 'orb_caption',
+          'output_mode': 'orb_caption_and_voice',
           'caption_display': 'immediate',
           'caption_persists': true,
+          'brain_transport': useLocal ? 'local_complete' : 'secure_sse',
         },
       );
       await _store.append(assistantTurn);
+      if (turnGeneration != _conversationGeneration) return;
       if (mounted) {
         setState(() {
           _turns = [..._turns, assistantTurn];
           _captionTurns = [..._captionTurns, assistantTurn];
-          _status = 'online';
         });
+      } else {
+        _turns = [..._turns, assistantTurn];
+        _captionTurns = [..._captionTurns, assistantTurn];
       }
       unawaited(_safeSyncTurn(assistantTurn, model: reply.model));
-      unawaited(_voice.speak(reply.text).catchError((_) {}));
+
+      if (useLocal) {
+        await _speakText(reply.text);
+      } else if (speechFuture != null) {
+        await speechFuture;
+      }
+
+      if (turnGeneration != _conversationGeneration) return;
       unawaited(_safeEvent('response_received', payload: {
         'latency_ms': DateTime.now().difference(started).inMilliseconds,
         'model': reply.model,
         'response_characters': reply.text.length,
         'knowledge_characters': knowledge.length,
-        'output_mode': 'orb_caption',
+        'output_mode': 'orb_caption_and_voice',
+        'brain_transport': useLocal ? 'local_complete' : 'secure_sse',
       }));
     } catch (error) {
+      if (turnGeneration != _conversationGeneration) return;
+      if (_voiceState.state == MomVoiceState.thinking) {
+        _recoverVoiceState();
+      }
       final modelFailure = classifyModelFailure(error);
       final failure = ChatTurn(
         sessionId: _sessionId,
@@ -321,6 +583,7 @@ class _MomAppState extends State<MomApp> {
         },
       );
       await _store.append(failure);
+      if (turnGeneration != _conversationGeneration) return;
       if (mounted) {
         setState(() {
           _turns = [..._turns, failure];
@@ -339,7 +602,6 @@ class _MomAppState extends State<MomApp> {
           };
         });
       }
-      unawaited(_voice.speak(modelFailure.userMessage).catchError((_) {}));
       unawaited(_safeEvent(
         'model_error',
         payload: {
@@ -353,8 +615,11 @@ class _MomAppState extends State<MomApp> {
         },
       ));
     } finally {
+      if (identical(_activeBrainStream, streamClient)) {
+        _activeBrainStream = null;
+      }
+      streamClient?.close();
       client.close();
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -412,6 +677,9 @@ class _MomAppState extends State<MomApp> {
 
   @override
   void dispose() {
+    _conversationGeneration++;
+    _activeBrainStream?.close();
+    _activeBrainStream = null;
     _sync?.close();
     _llama.stopIfStartedByMom();
     unawaited(_micProbe.dispose());
@@ -448,12 +716,12 @@ class _MomAppState extends State<MomApp> {
     } else if (!_startupIntroComplete) {
       home = StartupIntroScreen(
         onComplete: _completeStartupIntro,
-        onSpeak: (text) => _voice.speak(text).catchError((_) {}),
+        onSpeak: _speakText,
       );
     } else if (!_discovery.complete) {
       home = StartupDiscoveryScreen(
         onComplete: _completeDiscovery,
-        onSpeak: (text) => _voice.speak(text).catchError((_) {}),
+        onSpeak: _speakText,
       );
     } else {
       home = MomHomeScreen(
@@ -622,9 +890,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const Divider(height: 24),
           SwitchListTile(
-            title: const Text('Cloud conversation sync'),
+            title: const Text('Anonymous learning contributions'),
             subtitle: const Text(
-              'Keep MOM conversation history available to her cloud memory.',
+              'Share locally de-identified user text with MOM’s research '
+              'service. Raw conversations stay on this device.',
             ),
             value: config.cloudChatSync,
             onChanged: (v) => setState(() => config.cloudChatSync = v),

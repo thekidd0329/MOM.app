@@ -1,5 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.112.3";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -76,7 +76,7 @@ Deno.serve(async (req: Request) => {
     return response(200, {
       ok: true,
       service: "mom-sync",
-      version: 5,
+      version: 6,
       raw_memory_location: "device_only",
       raw_chat_storage: false,
       anonymous_research_endpoint: "mom-intelligence",
@@ -117,6 +117,27 @@ Deno.serve(async (req: Request) => {
 
   const installation = await authenticate(req);
   if (!installation) return response(401, { error: "invalid_installation_token" });
+
+  if (action === "runtime_config") {
+    const { data, error } = await db
+      .from("mom_runtime_config")
+      .select("config_value,min_app_version,updated_at")
+      .eq("config_key", "mobile.runtime")
+      .eq("enabled", true)
+      .maybeSingle();
+    if (error) {
+      console.error("mom-sync runtime_config", error.message);
+      return response(500, { error: "runtime_config_unavailable" });
+    }
+    if (!data) return response(404, { error: "runtime_config_not_found" });
+    return response(200, {
+      ok: true,
+      config: data.config_value,
+      min_app_version: data.min_app_version,
+      updated_at: data.updated_at,
+      server_time: new Date().toISOString(),
+    });
+  }
 
   // Privacy hard stop for old clients. Raw transcript and raw memory writes are
   // no longer accepted by the cloud, even if an outdated app attempts them.
