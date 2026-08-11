@@ -31,13 +31,7 @@ def wait_for_android(timeout: float = 120) -> None:
     while time.monotonic() < deadline:
         boot = adb("shell", "getprop", "sys.boot_completed", check=False)
         package_manager = adb("shell", "pm", "path", "android", check=False)
-        temp_storage = adb(
-            "shell",
-            "sh",
-            "-c",
-            "touch /data/local/tmp/mom-ready && rm /data/local/tmp/mom-ready",
-            check=False,
-        )
+        temp_storage = adb("shell", "test", "-d", "/data/local/tmp", check=False)
         last_state = (
             f"boot={boot.stdout.strip()!r}, "
             f"package_manager={package_manager.returncode}, "
