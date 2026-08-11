@@ -77,7 +77,7 @@ jobs:
           profile: pixel_6
           disable-animations: false
           script: |
-            set -euo pipefail
+            set -eu
             PACKAGE=app.mom.mom_native
             adb install -r "$GITHUB_WORKSPACE/mom-1.0.1-ui-debug.apk"
             adb shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO || true
@@ -115,7 +115,7 @@ jobs:
             test -s "$GITHUB_WORKSPACE/mom-home.xml"
             cat "$GITHUB_WORKSPACE/mom-home.xml"
 
-            read tap_x tap_y < <(python3 - <<'PY'
+            tap_coordinates="$(python3 - <<'PY'
             import re
             import subprocess
             import xml.etree.ElementTree as ET
@@ -138,7 +138,10 @@ jobs:
                 width, _ = map(int, m.groups())
                 print(width - 105, 175)
             PY
-            )
+            )"
+            set -- $tap_coordinates
+            tap_x="$1"
+            tap_y="$2"
             echo "Tapping Settings at $tap_x,$tap_y"
             adb shell input tap "$tap_x" "$tap_y"
             sleep 3
