@@ -219,6 +219,9 @@ def main() -> int:
         wait_for_node(evidence, "Version 1.1.0", timeout=45)
         wait_for_node(evidence, "Settings", timeout=15)
         wait_for_node(evidence, "Text MOM", timeout=15)
+        # Home controls intentionally zap in over 2.9 seconds. Wait until the
+        # visual transforms settle so accessibility bounds match hit targets.
+        time.sleep(3.2)
 
         root = dump_ui(evidence, "mom-home.xml")
         orb = find_node(root, "Animated MOM plasma orb")
