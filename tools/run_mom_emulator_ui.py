@@ -218,6 +218,18 @@ def main() -> int:
 
     try:
         wait_for_android()
+        # Google API emulator images can surface a Pixel Launcher ANR over the
+        # tested activity even after Android reports boot-complete. Suppress
+        # foreign system error dialogs and stop the launcher before MOM starts.
+        # MOM failures remain observable through the UI assertions and logcat.
+        adb("shell", "settings", "put", "global", "hide_error_dialogs", "1", check=False)
+        adb(
+            "shell",
+            "am",
+            "force-stop",
+            "com.google.android.apps.nexuslauncher",
+            check=False,
+        )
         adb("install", "-r", str(apk))
         adb("shell", "pm", "grant", PACKAGE, "android.permission.RECORD_AUDIO", check=False)
         adb("shell", "am", "force-stop", PACKAGE, check=False)
