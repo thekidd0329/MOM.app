@@ -159,7 +159,10 @@ def complete_onboarding(evidence: Path) -> None:
         raise RuntimeError("Name field did not appear")
     tap_node(editor)
     adb("shell", "input", "text", "UI_Test")
+    adb("shell", "input", "keyevent", "4")
+    time.sleep(1)
     tap_text(evidence, "Meet MOM")
+    wait_for_node(evidence, "That sounds like me", timeout=20)
 
     for _ in range(8):
         if home_is_visible(evidence):
