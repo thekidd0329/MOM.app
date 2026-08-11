@@ -8,7 +8,8 @@ void main() {
 
     expect(source, contains('required this.onMicTap'));
     expect(source, contains('final Future<void> Function() onMicTap'));
-    expect(source, contains('await widget.onMicTap();'));
+    expect(source, contains('widget.onMicTap()'));
+    expect(source, contains('onPressed: _handleMicTap'));
     expect(source, isNot(contains('My ears are still being constructed.')));
     expect(
       source,
