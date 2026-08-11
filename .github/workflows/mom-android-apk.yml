@@ -53,7 +53,9 @@ jobs:
         run: flutter analyze --no-fatal-infos
 
       - name: Run tests
-        working-directory: ${{ runner.temp }}/mom_android_apk
+        # Run from the repository so tests that verify canonical server-owned
+        # prompt files keep their expected ../../core_llm path.
+        working-directory: apps/mom_native
         run: flutter test
 
       - name: Resolve build identity
