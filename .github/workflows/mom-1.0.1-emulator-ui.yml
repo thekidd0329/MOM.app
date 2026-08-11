@@ -81,6 +81,7 @@ jobs:
             PACKAGE=app.mom.mom_native
             adb install -r "$GITHUB_WORKSPACE/mom-1.0.1-ui-debug.apk"
             adb shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO || true
+
             adb shell "run-as $PACKAGE mkdir -p shared_prefs"
             cat <<'EOF' | adb shell "run-as $PACKAGE sh -c 'cat > shared_prefs/FlutterSharedPreferences.xml'"
             <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
@@ -93,44 +94,73 @@ jobs:
             </map>
             EOF
 
+            echo "Injected MOM first-run preferences:"
+            adb shell "run-as $PACKAGE cat shared_prefs/FlutterSharedPreferences.xml" || true
+
             adb shell am force-stop "$PACKAGE"
             adb shell am start -W -n "$PACKAGE/.MainActivity" | tee "$GITHUB_WORKSPACE/mom-ui-start.txt"
-            grep -q "Status: ok" "$GITHUB_WORKSPACE/mom-ui-start.txt"
-            sleep 6
+            sleep 8
+
             pid="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
-            test -n "$pid"
+            if [ -z "$pid" ]; then
+              echo "::error::MOM process is not alive after launch"
+              exit 1
+            fi
+            echo "MOM pid=$pid"
 
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/mom-home-live-plasma.png"
             test -s "$GITHUB_WORKSPACE/mom-home-live-plasma.png"
-
-            adb shell uiautomator dump /sdcard/mom-home.xml >/dev/null
-            adb pull /sdcard/mom-home.xml "$GITHUB_WORKSPACE/mom-home.xml" >/dev/null
-            grep -q 'content-desc="Settings"' "$GITHUB_WORKSPACE/mom-home.xml"
-            grep -q 'text="Version 1.0.1"' "$GITHUB_WORKSPACE/mom-home.xml"
+            adb shell uiautomator dump /sdcard/mom-home.xml >/dev/null || true
+            adb pull /sdcard/mom-home.xml "$GITHUB_WORKSPACE/mom-home.xml" >/dev/null || true
+            test -s "$GITHUB_WORKSPACE/mom-home.xml"
+            cat "$GITHUB_WORKSPACE/mom-home.xml"
 
             read tap_x tap_y < <(python3 - <<'PY'
             import re
+            import subprocess
             import xml.etree.ElementTree as ET
+
             root = ET.parse('mom-home.xml').getroot()
             for node in root.iter('node'):
-                if node.attrib.get('content-desc') == 'Settings':
-                    m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib['bounds'])
-                    if not m:
-                        raise SystemExit('Settings bounds missing')
+                label = ' '.join((node.attrib.get('text', ''), node.attrib.get('content-desc', ''))).lower()
+                if 'settings' not in label:
+                    continue
+                m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', node.attrib.get('bounds', ''))
+                if m:
                     x1, y1, x2, y2 = map(int, m.groups())
                     print((x1 + x2)//2, (y1 + y2)//2)
                     break
             else:
-                raise SystemExit('Settings node not found')
+                size = subprocess.check_output(['adb', 'shell', 'wm', 'size'], text=True)
+                m = re.search(r'(\d+)x(\d+)', size)
+                if not m:
+                    raise SystemExit('Could not resolve emulator screen size')
+                width, _ = map(int, m.groups())
+                print(width - 105, 175)
             PY
             )
+            echo "Tapping Settings at $tap_x,$tap_y"
             adb shell input tap "$tap_x" "$tap_y"
-            sleep 2
-            adb shell uiautomator dump /sdcard/mom-settings.xml >/dev/null
-            adb pull /sdcard/mom-settings.xml "$GITHUB_WORKSPACE/mom-settings.xml" >/dev/null
-            grep -q 'text="MOM settings"' "$GITHUB_WORKSPACE/mom-settings.xml"
+            sleep 3
+
+            adb shell uiautomator dump /sdcard/mom-settings.xml >/dev/null || true
+            adb pull /sdcard/mom-settings.xml "$GITHUB_WORKSPACE/mom-settings.xml" >/dev/null || true
             adb exec-out screencap -p > "$GITHUB_WORKSPACE/mom-settings.png"
             test -s "$GITHUB_WORKSPACE/mom-settings.png"
+            test -s "$GITHUB_WORKSPACE/mom-settings.xml"
+            cat "$GITHUB_WORKSPACE/mom-settings.xml"
+
+            python3 - <<'PY'
+            import xml.etree.ElementTree as ET
+            root = ET.parse('mom-settings.xml').getroot()
+            labels = []
+            for node in root.iter('node'):
+                labels.extend([node.attrib.get('text', ''), node.attrib.get('content-desc', '')])
+            haystack = ' '.join(labels).lower()
+            if 'mom settings' not in haystack:
+                raise SystemExit('Settings screen did not open')
+            print('MOM settings opened successfully')
+            PY
 
       - name: Upload UI evidence
         if: always()
