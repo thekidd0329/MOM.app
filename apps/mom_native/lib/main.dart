@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'src/config.dart';
 import 'src/diagnostics.dart';
@@ -71,10 +70,6 @@ class _MomAppState extends State<MomApp> {
       final runtime = await _sync!.refreshRuntimeConfig();
       config.temperature = runtime.temperature;
       config.maxHistory = runtime.maxHistory;
-      try {
-        _systemPrompt = await rootBundle.loadString('assets/runtime_prompt.md');
-      } catch (_) {}
-
       _startupIntroComplete = await _startupIntroStore.isComplete();
       if (_startupIntroComplete) {
         final savedName = await _startupIntroStore.savedName();
