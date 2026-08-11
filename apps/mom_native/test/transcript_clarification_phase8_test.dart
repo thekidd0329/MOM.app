@@ -52,7 +52,9 @@ void main() {
 
     expect(source, contains('_transcriptQuality.shouldClarify('));
     expect(source, contains('Future<void> _clarifyTranscript('));
-    expect(source, contains("await speak('Wait, what did you just say?', automaticBargeIn: false)"));
+    expect(source, contains("'Wait, what did you just say?',"));
+    expect(source, contains('automaticBargeIn: false,'));
+    expect(source, contains('resumeHandsFree: false,'));
     expect(source, contains('await listen(onFinal: onFinal, onState: onState)'));
   });
 }
