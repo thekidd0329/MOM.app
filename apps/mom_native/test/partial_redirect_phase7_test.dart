@@ -60,7 +60,9 @@ void main() {
 
     expect(source, contains('_redirector.redirectFor('));
     expect(source, contains('Future<void> _interruptOffTrackUser('));
-    expect(source, contains('await speak(redirect, automaticBargeIn: false)'));
+    expect(source, contains('await speak('));
+    expect(source, contains('automaticBargeIn: false,'));
+    expect(source, contains('resumeHandsFree: false,'));
     expect(source, contains('await listen(onFinal: onFinal, onState: onState)'));
     expect(source, contains('partialResults: true'));
   });
