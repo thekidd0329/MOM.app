@@ -340,13 +340,11 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                     child: _zappedIn(
                       start: 0.52,
                       origin: Alignment.topRight,
-                      child: GestureDetector(
+                      child: _OutlineIconButton(
+                        icon: Icons.settings,
+                        tooltip: 'Settings',
+                        onPressed: widget.onSettings,
                         onLongPress: widget.onDiagnostics,
-                        child: _OutlineIconButton(
-                          icon: Icons.settings,
-                          tooltip: 'Settings',
-                          onPressed: widget.onSettings,
-                        ),
                       ),
                     ),
                   ),
@@ -466,29 +464,47 @@ class _OutlineIconButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     required this.tooltip,
+    this.onLongPress,
   });
 
   final IconData icon;
   final VoidCallback onPressed;
   final String tooltip;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: _MomPlasmaColors.purple, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: _MomPlasmaColors.purple.withValues(alpha: 0.20),
-            blurRadius: 13,
+    return Semantics(
+      label: tooltip,
+      button: true,
+      enabled: true,
+      onTap: onPressed,
+      onLongPress: onLongPress,
+      child: ExcludeSemantics(
+        child: Tooltip(
+          message: tooltip,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onPressed,
+            onLongPress: onLongPress,
+            child: Container(
+              width: 48,
+              height: 48,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: _MomPlasmaColors.purple, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: _MomPlasmaColors.purple.withValues(alpha: 0.20),
+                    blurRadius: 13,
+                  ),
+                ],
+              ),
+              child: Icon(icon, color: _MomPlasmaColors.purple),
+            ),
           ),
-        ],
-      ),
-      child: IconButton(
-        tooltip: tooltip,
-        icon: Icon(icon, color: _MomPlasmaColors.purple),
-        onPressed: onPressed,
+        ),
       ),
     );
   }
