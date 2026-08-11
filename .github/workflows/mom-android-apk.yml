@@ -28,26 +28,37 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate Android scaffold in runner
+      - name: Generate fresh Android scaffold and overlay MOM
+        working-directory: ${{ github.workspace }}
         run: |
-          if [ ! -d android ]; then
-            flutter create --platforms=android --org app.mom --project-name mom_native .
-          fi
-          # flutter create generates a demo widget test for MyApp, but MOM has
-          # its own entrypoint/tests. Never let the generated sample block APK CI.
-          rm -f test/widget_test.dart
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/mom_android_apk"
+          rm -rf "$BUILD_DIR"
+          flutter create --platforms=android --org app.mom --project-name mom_native "$BUILD_DIR"
+          rm -rf "$BUILD_DIR/lib" "$BUILD_DIR/test"
+          cp -a apps/mom_native/lib "$BUILD_DIR/lib"
+          cp -a apps/mom_native/test "$BUILD_DIR/test"
+          cp apps/mom_native/pubspec.yaml "$BUILD_DIR/pubspec.yaml"
+          rm -rf "$BUILD_DIR/assets"
+          cp -a apps/mom_native/assets "$BUILD_DIR/assets"
+          cp -a apps/mom_native/android/. "$BUILD_DIR/android/"
+          rm -f "$BUILD_DIR/test/widget_test.dart"
 
       - name: Install dependencies
+        working-directory: ${{ runner.temp }}/mom_android_apk
         run: flutter pub get
 
       - name: Analyze
+        working-directory: ${{ runner.temp }}/mom_android_apk
         run: flutter analyze --no-fatal-infos
 
       - name: Run tests
+        working-directory: ${{ runner.temp }}/mom_android_apk
         run: flutter test
 
       - name: Resolve build identity
         id: build_identity
+        working-directory: ${{ runner.temp }}/mom_android_apk
         shell: bash
         run: |
           set -euo pipefail
@@ -60,9 +71,11 @@ jobs:
           printf 'MOM Android APK\nversion=%s\ncommit=%s\n' "$APP_VERSION" "$GITHUB_SHA" > MOM_BUILD.txt
 
       - name: Build debug APK
+        working-directory: ${{ runner.temp }}/mom_android_apk
         run: flutter build apk --debug
 
       - name: Verify actual APK identity
+        working-directory: ${{ runner.temp }}/mom_android_apk
         shell: bash
         run: |
           set -euo pipefail
@@ -90,6 +103,7 @@ jobs:
             'app.mom.mom_native' "$EXPECTED_VERSION_NAME" "$EXPECTED_VERSION_CODE" >> MOM_BUILD.txt
 
       - name: Verify and name APK
+        working-directory: ${{ runner.temp }}/mom_android_apk
         shell: bash
         run: |
           set -euo pipefail
@@ -108,12 +122,13 @@ jobs:
         with:
           name: mom-android-debug-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}
           path: |
-            apps/mom_native/build/app/outputs/flutter-apk/MOM-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}-debug.apk
-            apps/mom_native/MOM_BUILD.txt
+            ${{ runner.temp }}/mom_android_apk/build/app/outputs/flutter-apk/MOM-${{ steps.build_identity.outputs.app_version }}-${{ steps.build_identity.outputs.short_sha }}-debug.apk
+            ${{ runner.temp }}/mom_android_apk/MOM_BUILD.txt
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish verified APK to private download repo
+        working-directory: ${{ runner.temp }}/mom_android_apk
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
