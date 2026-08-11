@@ -24,8 +24,38 @@ def adb(*args: str, check: bool = True, text: bool = True) -> subprocess.Complet
     return run(["adb", *args], check=check, text=text)
 
 
+def wait_for_android(timeout: float = 120) -> None:
+    adb("wait-for-device")
+    deadline = time.monotonic() + timeout
+    last_state = ""
+    while time.monotonic() < deadline:
+        boot = adb("shell", "getprop", "sys.boot_completed", check=False)
+        package_manager = adb("shell", "pm", "path", "android", check=False)
+        temp_storage = adb(
+            "shell",
+            "sh",
+            "-c",
+            "touch /data/local/tmp/mom-ready && rm /data/local/tmp/mom-ready",
+            check=False,
+        )
+        last_state = (
+            f"boot={boot.stdout.strip()!r}, "
+            f"package_manager={package_manager.returncode}, "
+            f"temp_storage={temp_storage.returncode}"
+        )
+        if (
+            boot.stdout.strip() == "1"
+            and package_manager.returncode == 0
+            and temp_storage.returncode == 0
+        ):
+            return
+        time.sleep(2)
+    raise RuntimeError(f"Android never became test-ready: {last_state}")
+
+
 def dump_ui(evidence: Path, name: str) -> ET.Element:
-    remote = "/sdcard/mom-window.xml"
+    remote = "/data/local/tmp/mom-window.xml"
+    adb("shell", "rm", "-f", remote, check=False)
     adb("shell", "uiautomator", "dump", remote, check=False)
     result = adb("exec-out", "cat", remote, check=False)
     if result.returncode != 0 or not result.stdout.strip():
@@ -177,11 +207,15 @@ def main() -> int:
     evidence.mkdir(parents=True, exist_ok=True)
 
     try:
+        wait_for_android()
         adb("install", "-r", str(apk))
         adb("shell", "pm", "grant", PACKAGE, "android.permission.RECORD_AUDIO", check=False)
         adb("shell", "am", "force-stop", PACKAGE, check=False)
-        launch = adb("shell", "am", "start", "-W", "-n", ACTIVITY)
-        (evidence / "mom-ui-start.txt").write_text(launch.stdout + launch.stderr, encoding="utf-8")
+        launch = adb("shell", "am", "start", "-W", "-n", ACTIVITY, check=False)
+        launch_output = launch.stdout + launch.stderr
+        (evidence / "mom-ui-start.txt").write_text(launch_output, encoding="utf-8")
+        if launch.returncode != 0 or "Status: ok" not in launch_output:
+            raise RuntimeError(f"MOM MainActivity did not launch cleanly: {launch_output.strip()}")
 
         wait_for_node(evidence, "Swearing is fine", timeout=60)
         complete_onboarding(evidence)
