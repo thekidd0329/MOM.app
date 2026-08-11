@@ -229,6 +229,19 @@ jobs:
           name: ${{ needs.build.outputs.artifact_name }}
           path: apk-artifact
 
+      - name: Enable KVM hardware acceleration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::This runner does not expose /dev/kvm."
+            exit 1
+          fi
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+          ls -l /dev/kvm
+
       - name: Complete onboarding and verify home/settings UI
         uses: ReactiveCircus/android-emulator-runner@v2.38.0
         with:
@@ -236,7 +249,7 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_6
-          disable-animations: false
+          disable-animations: true
           script: python3 tools/run_mom_emulator_ui.py apk-artifact ui-evidence
 
       - name: Upload emulator evidence
