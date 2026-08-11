@@ -360,14 +360,25 @@ class _MomAppState extends State<MomApp> {
 
   Future<void> _openSettings() async {
     final current = _config;
-    final sync = _sync;
-    if (current == null || sync == null) return;
+    if (current == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('MOM settings are still loading.')),
+        );
+      }
+      return;
+    }
+
     final updated = await Navigator.of(context).push<MomConfig>(
       MaterialPageRoute(
-        builder: (_) => SettingsScreen(initial: current.copy(), sync: sync),
+        builder: (_) => SettingsScreen(
+          initial: current.copy(),
+          sync: _sync,
+        ),
       ),
     );
     if (updated == null) return;
+
     await _configStore.save(updated);
     _sync?.close();
     _sync = MomSyncClient(syncUrl: updated.syncUrl);
@@ -486,7 +497,7 @@ class SettingsScreen extends StatefulWidget {
   });
 
   final MomConfig initial;
-  final MomSyncClient sync;
+  final MomSyncClient? sync;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -539,6 +550,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final sync = widget.sync;
     return Scaffold(
       appBar: AppBar(
         title: const Text('MOM settings'),
@@ -591,17 +603,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
           ListTile(
             contentPadding: EdgeInsets.zero,
+            enabled: sync != null,
             leading: const Icon(Icons.devices_other),
             title: const Text('Use MOM on another device'),
-            subtitle: const Text(
-              'Optional cross-device identity. MOM stays anonymous unless you choose to link devices.',
+            subtitle: Text(
+              sync == null
+                  ? 'Cloud connection unavailable right now. Other settings still work.'
+                  : 'Optional cross-device identity. MOM stays anonymous unless you choose to link devices.',
             ),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => MomLoginScreen(sync: widget.sync),
-              ),
-            ),
+            onTap: sync == null
+                ? null
+                : () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MomLoginScreen(sync: sync),
+                      ),
+                    ),
           ),
           const Divider(height: 24),
           SwitchListTile(

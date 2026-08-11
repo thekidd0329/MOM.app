@@ -12,6 +12,7 @@ on:
       - "tools/build_mom_knowledge.py"
       - "tools/ensure_android_manifest.py"
       - "tools/verify_android_apk.py"
+      - "tools/verify_mom_1_0_1_ui_contract.py"
       - ".github/workflows/mom-native.yml"
   pull_request:
     branches: [main]
@@ -23,6 +24,7 @@ on:
       - "tools/build_mom_knowledge.py"
       - "tools/ensure_android_manifest.py"
       - "tools/verify_android_apk.py"
+      - "tools/verify_mom_1_0_1_ui_contract.py"
       - ".github/workflows/mom-native.yml"
 
 permissions:
@@ -34,6 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify MOM 1.0.1 UI contract
+        run: python3 tools/verify_mom_1_0_1_ui_contract.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -82,6 +86,7 @@ jobs:
           cp apps/mom_native/pubspec.yaml "$RUNNER_TEMP/mom_android/pubspec.yaml"
           rm -rf "$RUNNER_TEMP/mom_android/assets"
           cp -a apps/mom_native/assets "$RUNNER_TEMP/mom_android/assets"
+          cp -a apps/mom_native/android/. "$RUNNER_TEMP/mom_android/android/"
           git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$RUNNER_TEMP/crispasr"
           ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$RUNNER_TEMP/crispasr/build-android.sh" --abi arm64-v8a
           CRISP_BUILD="$RUNNER_TEMP/crispasr/build-android/arm64-v8a"
@@ -101,7 +106,7 @@ jobs:
       - name: Build Android release APK
         working-directory: ${{ runner.temp }}/mom_android
         run: flutter pub get && flutter build apk --release --target-platform android-arm64
-      - name: Preserve Android 1.0 APK
+      - name: Preserve Android 1.0.1 APK
         uses: actions/upload-artifact@v4
         with:
           name: mom-android-apk
