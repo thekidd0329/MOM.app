@@ -155,6 +155,97 @@ void main() {
     client.close();
   });
 
+  test('runtime config authenticates, validates, and caches server values',
+      () async {
+    FlutterSecureStorage.setMockInitialValues({
+      'mom_installation_id': '88888888-8888-4888-8888-888888888888',
+      'mom_installation_token': 'i' * 64,
+    });
+
+    var calls = 0;
+    final mock = MockClient((request) async {
+      calls++;
+      expect(request.url.path.endsWith('/mom-sync'), isTrue);
+      expect(request.headers['x-mom-installation'],
+          '88888888-8888-4888-8888-888888888888');
+      expect(request.headers['x-mom-token'], 'i' * 64);
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body, {'action': 'runtime_config'});
+      return http.Response(
+        jsonEncode({
+          'ok': true,
+          'config': {
+            'schema_version': 1,
+            'release': '1.1.0',
+            'temperature': 0.61,
+            'max_history': 12,
+            'request_timeout_seconds': 240,
+            'raw_memory_location': 'device_only',
+            'cloud_raw_chat_storage': false,
+            'bundled_runtime_prompt_required': false,
+            'bundled_repository_knowledge_required': false,
+          },
+          'updated_at': '2026-08-10T12:00:00Z',
+        }),
+        200,
+      );
+    });
+
+    final client = MomSyncClient(
+      syncUrl: 'https://example.test/functions/v1/mom-sync',
+      secureStorage: const FlutterSecureStorage(),
+      httpClient: mock,
+    );
+    final live = await client.runtimeConfig();
+    expect(live.source, 'server');
+    expect(live.temperature, 0.61);
+    expect(live.maxHistory, 12);
+    expect(live.rawMemoryLocation, 'device_only');
+    expect(live.cloudRawChatStorage, isFalse);
+
+    final cached = await client.cachedRuntimeConfig();
+    expect(cached.source, 'cache');
+    expect(cached.temperature, 0.61);
+    expect(cached.maxHistory, 12);
+    expect(calls, 1);
+    client.close();
+  });
+
+  test('runtime config falls back to safe cache while offline', () async {
+    SharedPreferences.setMockInitialValues({
+      'mom_runtime_config_v1': jsonEncode({
+        'schema_version': 1,
+        'release': '1.1.0',
+        'temperature': 0.55,
+        'max_history': 10,
+        'request_timeout_seconds': 180,
+        'raw_memory_location': 'device_only',
+        'cloud_raw_chat_storage': false,
+        'bundled_runtime_prompt_required': false,
+        'bundled_repository_knowledge_required': false,
+      }),
+    });
+    FlutterSecureStorage.setMockInitialValues({
+      'mom_installation_id': '99999999-9999-4999-8999-999999999999',
+      'mom_installation_token': 'j' * 64,
+    });
+
+    final mock = MockClient((request) async {
+      throw http.ClientException('offline');
+    });
+    final client = MomSyncClient(
+      syncUrl: 'https://example.test/functions/v1/mom-sync',
+      secureStorage: const FlutterSecureStorage(),
+      httpClient: mock,
+    );
+
+    final config = await client.refreshRuntimeConfig();
+    expect(config.source, 'cache');
+    expect(config.temperature, 0.55);
+    expect(config.maxHistory, 10);
+    client.close();
+  });
+
   test('provider failures preserve provider stage and status', () async {
     FlutterSecureStorage.setMockInitialValues({
       'mom_installation_id': '44444444-4444-4444-8444-444444444444',

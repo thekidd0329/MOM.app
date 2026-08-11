@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'src/config.dart';
 import 'src/diagnostics.dart';
@@ -67,10 +66,10 @@ class _MomAppState extends State<MomApp> {
     try {
       final config = await _configStore.load();
       _config = config;
-      try {
-        _systemPrompt = await rootBundle.loadString('assets/runtime_prompt.md');
-      } catch (_) {}
-
+      _sync = MomSyncClient(syncUrl: config.syncUrl);
+      final runtime = await _sync!.refreshRuntimeConfig();
+      config.temperature = runtime.temperature;
+      config.maxHistory = runtime.maxHistory;
       _startupIntroComplete = await _startupIntroStore.isComplete();
       if (_startupIntroComplete) {
         final savedName = await _startupIntroStore.savedName();
@@ -89,7 +88,6 @@ class _MomAppState extends State<MomApp> {
       }
 
       await _knowledge.load(repoRoot: config.repoRoot);
-      _sync = MomSyncClient(syncUrl: config.syncUrl);
       _sessionId = await _store.currentSessionId();
       _turns = await _store.loadSession(_sessionId, limit: 200);
       _captionTurns = _turns

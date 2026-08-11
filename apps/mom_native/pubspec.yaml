@@ -8,9 +8,6 @@ environment:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/runtime_prompt.md
-    - assets/knowledge/mom_knowledge.jsonl
 
 dependencies:
   flutter:
