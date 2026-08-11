@@ -3,15 +3,27 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('bundled runtime prompt matches canonical MOM prompt', () {
-    final canonical = File('../../core_llm/mamallama/runtime_prompt.md').readAsStringSync();
-    final bundled = File('assets/runtime_prompt.md').readAsStringSync();
+  test('mobile runtime prompt authority is Supabase mom-brain', () {
+    final migration = File(
+      '../../supabase/migrations/20260810021810_mom_110_server_runtime_config.sql',
+    ).readAsStringSync();
+    final pubspec = File('pubspec.yaml').readAsStringSync();
 
-    expect(bundled, canonical);
+    expect(migration, contains("'prompt_authority', 'mom-brain'"));
+    expect(migration, contains("'bundled_runtime_prompt_required', false"));
+    expect(
+      migration,
+      contains("'bundled_repository_knowledge_required', false"),
+    );
+    expect(pubspec, isNot(contains('assets/runtime_prompt.md')));
+    expect(pubspec, isNot(contains('assets/knowledge/mom_knowledge.jsonl')));
+    expect(File('assets/runtime_prompt.md').existsSync(), isFalse);
+    expect(File('assets/knowledge/mom_knowledge.jsonl').existsSync(), isFalse);
   });
 
-  test('runtime prompt preserves critical MOM identity behavior', () {
-    final prompt = File('assets/runtime_prompt.md').readAsStringSync();
+  test('canonical server prompt preserves critical MOM identity behavior', () {
+    final prompt =
+        File('../../core_llm/mamallama/runtime_prompt.md').readAsStringSync();
 
     expect(prompt, contains('I think I\'m your mom.'));
     expect(prompt, contains('Emotion is the conversational authority.'));
