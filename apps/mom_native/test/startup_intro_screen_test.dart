@@ -27,7 +27,7 @@ void main() {
     expect(await store.allowsStrongLanguage(), isFalse);
   });
 
-  testWidgets('first-run intro keeps disclosure and video slot in sequence',
+  testWidgets('first-run intro bypasses the unbundled trailer placeholder',
       (tester) async {
     bool? completedStrongLanguage;
     String? completedName;
@@ -57,22 +57,10 @@ void main() {
     expect(find.text('I’m somewhere safe'), findsOneWidget);
 
     await tester.tap(find.text('I’m somewhere safe'));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
-    expect(find.text('Skip intro'), findsOneWidget);
-    expect(find.text('What’s your name?'), findsNothing);
-
-    // Until the actual trailer asset is bundled, the reserved video stage
-    // must not silently disappear on a timer.
-    await tester.pump(const Duration(seconds: 3));
-    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
-    expect(find.text('Skip intro'), findsOneWidget);
-    expect(find.text('What’s your name?'), findsNothing);
-
-    await tester.tap(find.text('Skip intro'));
     await tester.pumpAndSettle();
 
+    expect(find.byIcon(Icons.play_circle_outline), findsNothing);
+    expect(find.text('Skip intro'), findsNothing);
     expect(find.text('What’s your name?'), findsOneWidget);
     expect(find.text('Meet MOM'), findsOneWidget);
 
