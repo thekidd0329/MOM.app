@@ -158,7 +158,66 @@ jobs:
         working-directory: ${{ runner.temp }}/mom_android
         run: flutter build apk --release --target-platform android-arm64,android-x64
 
+      - name: Sign PR APK with isolated ephemeral CI key
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$RUNNER_TEMP/mom_android"
+          SOURCE_APK="$BUILD_DIR/build/app/outputs/flutter-apk/app-release.apk"
+          SIGNED_APK="$BUILD_DIR/build/app/outputs/flutter-apk/app-release-signed.apk"
+          KEYSTORE="$RUNNER_TEMP/mom-ci-release.p12"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          export CI_KEY_PASSWORD="$(openssl rand -hex 32)"
+          CI_KEY_ALIAS="mom-ci"
+          trap 'rm -f "$KEYSTORE"' EXIT
+
+          test -s "$SOURCE_APK"
+          test -x "$APKSIGNER"
+          keytool -genkeypair \
+            -noprompt \
+            -storetype PKCS12 \
+            -keystore "$KEYSTORE" \
+            -storepass "$CI_KEY_PASSWORD" \
+            -keypass "$CI_KEY_PASSWORD" \
+            -alias "$CI_KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 2 \
+            -dname "CN=MOM CI, OU=CI, O=MOM, C=US"
+          chmod 0600 "$KEYSTORE"
+
+          "$APKSIGNER" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$CI_KEY_ALIAS" \
+            --ks-pass env:CI_KEY_PASSWORD \
+            --key-pass env:CI_KEY_PASSWORD \
+            --out "$SIGNED_APK" \
+            "$SOURCE_APK"
+
+          CERTS="$("$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK")"
+          if printf '%s\n' "$CERTS" | grep -Fqi 'Android Debug'; then
+            echo "::error::PR verification APK unexpectedly retained an Android Debug certificate."
+            exit 1
+          fi
+
+          ACTUAL_CERT_SHA256="$(
+            printf '%s\n' "$CERTS" \
+              | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' \
+              | tr -d '[:space:]:' \
+              | tr '[:upper:]' '[:lower:]'
+          )"
+          if [[ ! "$ACTUAL_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not read the ephemeral CI signing certificate fingerprint."
+            exit 1
+          fi
+
+          mv "$SIGNED_APK" "$SOURCE_APK"
+          printf '%s\n' "$ACTUAL_CERT_SHA256" > "$BUILD_DIR/release-cert.sha256"
+          printf 'ci-ephemeral\n' > "$BUILD_DIR/signing-mode.txt"
+
       - name: Sign with the permanent MOM release key
+        if: github.event_name != 'pull_request'
         shell: bash
         env:
           MOM_ANDROID_KEYSTORE_BASE64: ${{ secrets.MOM_ANDROID_KEYSTORE_BASE64 }}
@@ -229,6 +288,7 @@ jobs:
 
           mv "$SIGNED_APK" "$SOURCE_APK"
           printf '%s\n' "$ACTUAL_CERT_SHA256" > "$BUILD_DIR/release-cert.sha256"
+          printf 'permanent\n' > "$BUILD_DIR/signing-mode.txt"
 
       - name: Verify APK identity and native contents
         id: identity
@@ -243,7 +303,16 @@ jobs:
           VERSION_CODE="${APP_VERSION##*+}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           SAFE_VERSION="${APP_VERSION/+/-}"
-          APK_NAME="MOM-${SAFE_VERSION}-${SHORT_SHA}-release.apk"
+          SIGNING_MODE="$(<"$BUILD_DIR/signing-mode.txt")"
+          if [ "$SIGNING_MODE" = "ci-ephemeral" ]; then
+            APK_KIND="ci"
+          elif [ "$SIGNING_MODE" = "permanent" ]; then
+            APK_KIND="release"
+          else
+            echo "::error::Unknown APK signing mode: $SIGNING_MODE"
+            exit 1
+          fi
+          APK_NAME="MOM-${SAFE_VERSION}-${SHORT_SHA}-${APK_KIND}.apk"
           OUTPUT_APK="$BUILD_DIR/build/app/outputs/flutter-apk/$APK_NAME"
 
           test -s "$SOURCE_APK"
@@ -267,11 +336,13 @@ jobs:
             printf 'version=%s\n' "$APP_VERSION"
             printf 'commit=%s\n' "$GITHUB_SHA"
             printf 'apk=%s\n' "$APK_NAME"
+            printf 'signing_mode=%s\n' "$SIGNING_MODE"
             printf 'bytes=%s\n' "$APK_BYTES"
             printf 'sha256=%s\n' "$APK_SHA256"
             printf 'cert_sha256=%s\n' "$CERT_SHA256"
             flutter --version | head -n 1
           } > "$BUILD_DIR/MOM_BUILD.txt"
+          grep -E '^signing_mode=(ci-ephemeral|permanent)$' "$BUILD_DIR/MOM_BUILD.txt"
           grep -E '^sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
           grep -E '^cert_sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
 
@@ -361,9 +432,10 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
           test -s "$APK"
           test -s apk-artifact/MOM_BUILD.txt
+          grep -F 'signing_mode=permanent' apk-artifact/MOM_BUILD.txt
           gh release create "mom-1.1.0-$SHORT_SHA" \
             "$APK#MOM.apk" \
             "apk-artifact/MOM_BUILD.txt#MOM_BUILD.txt" \
             --repo thekidd0329/Cleantestapp \
             --title "MOM 1.1.0 ($SHORT_SHA)" \
-            --notes "Unified MOM 1.1.0 APK. The uploaded binary passed source, native-library, identity, and emulator UI verification."
+            --notes "Unified MOM 1.1.0 APK. The uploaded binary passed source, native-library, identity, permanent-signature, and emulator UI verification."
