@@ -61,6 +61,8 @@ class StartupIntroScreen extends StatefulWidget {
 }
 
 class _StartupIntroScreenState extends State<StartupIntroScreen> {
+  static const bool _trailerBundled = false;
+
   final TextEditingController _name = TextEditingController();
   final StartupIntroStore _store = StartupIntroStore();
   int _stage = 0;
@@ -95,10 +97,14 @@ class _StartupIntroScreenState extends State<StartupIntroScreen> {
   }
 
   void _enterVideoStage() {
-    // Keep the intro slot on screen until the user explicitly advances it.
-    // The trailer asset is not bundled yet, so silently auto-skipping this
-    // stage would make the first-run experience look broken.
     setState(() => _stage = 2);
+
+    // Demo rescue: the trailer asset is not bundled yet. Do not leave a
+    // first-run user parked on a fake player. Keep the stage in the flow so
+    // the real trailer can be enabled later without redesigning onboarding.
+    if (!_trailerBundled) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _finishVideo());
+    }
   }
 
   void _finishVideo() {
