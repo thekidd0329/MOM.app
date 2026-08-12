@@ -43,6 +43,12 @@ def main() -> None:
     require("sudo chmod 0666 /dev/kvm" in workflow, "emulator KVM access must be enabled explicitly")
     require("disable-animations: true" in workflow, "emulator system animations must be disabled for deterministic UI proof")
     require("android-arm64,android-x64" in workflow, "universal ARM64/x86_64 target is missing")
+    require("Sign with the permanent MOM release key" in workflow, "permanent Android signing step is missing")
+    require("MOM_ANDROID_KEYSTORE_BASE64" in workflow, "release keystore secret is not wired")
+    require("MOM_ANDROID_CERT_SHA256" in workflow, "release certificate fingerprint is not pinned")
+    require("apksigner" in workflow, "release APK is not signed and verified with apksigner")
+    require("Android Debug" in workflow, "debug-certificate rejection is missing")
+    require("cert_sha256=" in workflow, "release certificate fingerprint is absent from build evidence")
     require("git push origin" not in all_workflows, "a workflow still writes commits into a source branch")
     require("builds/latest_android.json" not in all_workflows, "build status must be an artifact, not a source commit")
 
