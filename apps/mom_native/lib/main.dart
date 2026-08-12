@@ -34,6 +34,9 @@ class MomApp extends StatefulWidget {
 }
 
 class _MomAppState extends State<MomApp> {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
+      GlobalKey<ScaffoldMessengerState>();
   final ConfigStore _configStore = ConfigStore();
   final ConversationStore _store = ConversationStore();
   final KnowledgeService _knowledge = KnowledgeService();
@@ -626,15 +629,21 @@ class _MomAppState extends State<MomApp> {
   Future<void> _openSettings() async {
     final current = _config;
     if (current == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('MOM settings are still loading.')),
-        );
-      }
+      _scaffoldMessengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text('MOM settings are still loading.')),
+      );
       return;
     }
 
-    final updated = await Navigator.of(context).push<MomConfig>(
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) {
+      _scaffoldMessengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text('MOM navigation is still loading.')),
+      );
+      return;
+    }
+
+    final updated = await navigator.push<MomConfig>(
       MaterialPageRoute(
         builder: (_) => SettingsScreen(
           initial: current.copy(),
@@ -660,7 +669,9 @@ class _MomAppState extends State<MomApp> {
     final config = _config;
     final sync = _sync;
     if (config == null || sync == null) return;
-    await Navigator.of(context).push(
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    await navigator.push<void>(
       MaterialPageRoute(
         builder: (_) => DiagnosticsScreen(
           runner: DiagnosticsRunner(
@@ -739,6 +750,8 @@ class _MomAppState extends State<MomApp> {
     }
 
     return MaterialApp(
+      navigatorKey: _navigatorKey,
+      scaffoldMessengerKey: _scaffoldMessengerKey,
       debugShowCheckedModeBanner: false,
       title: 'MOM',
       themeMode: ThemeMode.system,
