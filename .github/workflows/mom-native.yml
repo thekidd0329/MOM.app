@@ -158,6 +158,78 @@ jobs:
         working-directory: ${{ runner.temp }}/mom_android
         run: flutter build apk --release --target-platform android-arm64,android-x64
 
+      - name: Sign with the permanent MOM release key
+        shell: bash
+        env:
+          MOM_ANDROID_KEYSTORE_BASE64: ${{ secrets.MOM_ANDROID_KEYSTORE_BASE64 }}
+          MOM_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.MOM_ANDROID_KEYSTORE_PASSWORD }}
+          MOM_ANDROID_KEY_ALIAS: ${{ secrets.MOM_ANDROID_KEY_ALIAS }}
+          MOM_ANDROID_KEY_PASSWORD: ${{ secrets.MOM_ANDROID_KEY_PASSWORD }}
+          MOM_ANDROID_CERT_SHA256: ${{ secrets.MOM_ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          for NAME in \
+            MOM_ANDROID_KEYSTORE_BASE64 \
+            MOM_ANDROID_KEYSTORE_PASSWORD \
+            MOM_ANDROID_KEY_ALIAS \
+            MOM_ANDROID_KEY_PASSWORD \
+            MOM_ANDROID_CERT_SHA256; do
+            if [ -z "${!NAME:-}" ]; then
+              echo "::error::$NAME is required for a stable MOM release signature."
+              exit 1
+            fi
+          done
+
+          BUILD_DIR="$RUNNER_TEMP/mom_android"
+          SOURCE_APK="$BUILD_DIR/build/app/outputs/flutter-apk/app-release.apk"
+          SIGNED_APK="$BUILD_DIR/build/app/outputs/flutter-apk/app-release-signed.apk"
+          KEYSTORE="$RUNNER_TEMP/mom-release.jks"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          trap 'rm -f "$KEYSTORE"' EXIT
+
+          test -s "$SOURCE_APK"
+          test -x "$APKSIGNER"
+          printf '%s' "$MOM_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          chmod 0600 "$KEYSTORE"
+          test -s "$KEYSTORE"
+
+          "$APKSIGNER" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias "$MOM_ANDROID_KEY_ALIAS" \
+            --ks-pass env:MOM_ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:MOM_ANDROID_KEY_PASSWORD \
+            --out "$SIGNED_APK" \
+            "$SOURCE_APK"
+
+          CERTS="$("$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK")"
+          if printf '%s\n' "$CERTS" | grep -Fqi 'Android Debug'; then
+            echo "::error::MOM release APK is signed with an Android Debug certificate."
+            exit 1
+          fi
+
+          ACTUAL_CERT_SHA256="$(
+            printf '%s\n' "$CERTS" \
+              | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' \
+              | tr -d '[:space:]:' \
+              | tr '[:upper:]' '[:lower:]'
+          )"
+          EXPECTED_CERT_SHA256="$(
+            printf '%s' "$MOM_ANDROID_CERT_SHA256" \
+              | tr -d '[:space:]:' \
+              | tr '[:upper:]' '[:lower:]'
+          )"
+          if [[ ! "$EXPECTED_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::MOM_ANDROID_CERT_SHA256 must be one SHA-256 fingerprint."
+            exit 1
+          fi
+          if [ "$ACTUAL_CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::MOM release certificate fingerprint does not match the pinned fingerprint."
+            exit 1
+          fi
+
+          mv "$SIGNED_APK" "$SOURCE_APK"
+          printf '%s\n' "$ACTUAL_CERT_SHA256" > "$BUILD_DIR/release-cert.sha256"
+
       - name: Verify APK identity and native contents
         id: identity
         shell: bash
@@ -189,6 +261,7 @@ jobs:
 
           APK_BYTES="$(stat -c '%s' "$OUTPUT_APK")"
           APK_SHA256="$(sha256sum "$OUTPUT_APK" | awk '{print $1}')"
+          CERT_SHA256="$(<"$BUILD_DIR/release-cert.sha256")"
           {
             printf 'MOM Android 1.1.0\n'
             printf 'version=%s\n' "$APP_VERSION"
@@ -196,9 +269,11 @@ jobs:
             printf 'apk=%s\n' "$APK_NAME"
             printf 'bytes=%s\n' "$APK_BYTES"
             printf 'sha256=%s\n' "$APK_SHA256"
+            printf 'cert_sha256=%s\n' "$CERT_SHA256"
             flutter --version | head -n 1
           } > "$BUILD_DIR/MOM_BUILD.txt"
           grep -E '^sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
+          grep -E '^cert_sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
 
           ARTIFACT_DIR="$BUILD_DIR/release-artifact"
           mkdir -p "$ARTIFACT_DIR"
