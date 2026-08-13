@@ -167,6 +167,19 @@ def main() -> None:
     )
 
     require(
+        "debugShowCheckedModeBanner: true," in main_source,
+        "tracked main.dart must keep the Flutter debug banner visible",
+    )
+    require(
+        "debugShowCheckedModeBanner: false," not in main_source,
+        "tracked main.dart must not hide the Flutter debug banner",
+    )
+    require(
+        "debugPrint('MOM debug console logging active');" in main_source,
+        "tracked main.dart must keep debug console logging active",
+    )
+
+    require(
         "version: 1.0.1+10" in pubspec,
         "MOM 1.0.1 build 10 package identity is missing",
     )
