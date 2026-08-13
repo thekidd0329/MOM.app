@@ -195,20 +195,17 @@ jobs:
             --out "$SIGNED_APK" \
             "$SOURCE_APK"
 
-          CERTS="$("$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK")"
-          if printf '%s\n' "$CERTS" | grep -Fqi 'Android Debug'; then
-            echo "::error::PR verification APK unexpectedly retained an Android Debug certificate."
-            exit 1
-          fi
-
+          "$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK"
           ACTUAL_CERT_SHA256="$(
-            printf '%s\n' "$CERTS" \
-              | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' \
-              | tr -d '[:space:]:' \
-              | tr '[:upper:]' '[:lower:]'
+            keytool -exportcert \
+              -keystore "$KEYSTORE" \
+              -storepass "$CI_KEY_PASSWORD" \
+              -alias "$CI_KEY_ALIAS" \
+              | sha256sum \
+              | awk '{print $1}'
           )"
           if [[ ! "$ACTUAL_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
-            echo "::error::Could not read the ephemeral CI signing certificate fingerprint."
+            echo "::error::Could not calculate the ephemeral CI signing certificate fingerprint."
             exit 1
           fi
 
@@ -260,23 +257,30 @@ jobs:
             --out "$SIGNED_APK" \
             "$SOURCE_APK"
 
-          CERTS="$("$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK")"
+          CERTS="$("$APKSIGNER" verify --verbose --print-certs "$SIGNED_APK" 2>&1)"
+          printf '%s\n' "$CERTS"
           if printf '%s\n' "$CERTS" | grep -Fqi 'Android Debug'; then
             echo "::error::MOM release APK is signed with an Android Debug certificate."
             exit 1
           fi
 
           ACTUAL_CERT_SHA256="$(
-            printf '%s\n' "$CERTS" \
-              | awk -F': ' '/certificate SHA-256 digest:/ {print $2; exit}' \
-              | tr -d '[:space:]:' \
-              | tr '[:upper:]' '[:lower:]'
+            keytool -exportcert \
+              -keystore "$KEYSTORE" \
+              -storepass "$MOM_ANDROID_KEYSTORE_PASSWORD" \
+              -alias "$MOM_ANDROID_KEY_ALIAS" \
+              | sha256sum \
+              | awk '{print $1}'
           )"
           EXPECTED_CERT_SHA256="$(
             printf '%s' "$MOM_ANDROID_CERT_SHA256" \
               | tr -d '[:space:]:' \
               | tr '[:upper:]' '[:lower:]'
           )"
+          if [[ ! "$ACTUAL_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not calculate the MOM release certificate fingerprint."
+            exit 1
+          fi
           if [[ ! "$EXPECTED_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
             echo "::error::MOM_ANDROID_CERT_SHA256 must be one SHA-256 fingerprint."
             exit 1
