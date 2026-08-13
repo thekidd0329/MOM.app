@@ -23,6 +23,7 @@ import 'src/voice_state.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  debugPrint('MOM debug console logging active');
   runApp(const MomApp());
 }
 
@@ -752,7 +753,7 @@ class _MomAppState extends State<MomApp> {
     return MaterialApp(
       navigatorKey: _navigatorKey,
       scaffoldMessengerKey: _scaffoldMessengerKey,
-      debugShowCheckedModeBanner: false,
+      debugShowCheckedModeBanner: true,
       title: 'MOM',
       themeMode: ThemeMode.system,
       theme: ThemeData(
