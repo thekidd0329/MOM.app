@@ -1,4 +1,4 @@
-name: MOM 1.1.0 Unified Android
+name: MOM 1.0.1 Unified Android
 
 on:
   workflow_dispatch:
@@ -336,7 +336,7 @@ jobs:
           APK_SHA256="$(sha256sum "$OUTPUT_APK" | awk '{print $1}')"
           CERT_SHA256="$(<"$BUILD_DIR/release-cert.sha256")"
           {
-            printf 'MOM Android 1.1.0\n'
+            printf 'MOM Android 1.0.1\n'
             printf 'version=%s\n' "$APP_VERSION"
             printf 'commit=%s\n' "$GITHUB_SHA"
             printf 'apk=%s\n' "$APK_NAME"
@@ -355,7 +355,7 @@ jobs:
           cp "$OUTPUT_APK" "$ARTIFACT_DIR/$APK_NAME"
           cp "$BUILD_DIR/MOM_BUILD.txt" "$ARTIFACT_DIR/MOM_BUILD.txt"
 
-          echo "artifact_name=mom-android-1.1.0-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=mom-android-1.0.1-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload the verified APK
@@ -406,7 +406,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mom-1.1.0-ui-evidence-${{ github.sha }}
+          name: mom-1.0.1-ui-evidence-${{ github.sha }}
           path: ui-evidence
           if-no-files-found: ignore
           retention-days: 14
@@ -416,30 +416,28 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build, emulator]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.build.outputs.artifact_name }}
           path: apk-artifact
 
-      - name: Publish to the private APK download repository
+      - name: Publish public GitHub release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "APK_REPO_TOKEN is not configured; verified artifact remains in this run."
-            exit 0
-          fi
           APK="apk-artifact/${{ needs.build.outputs.apk_name }}"
           SHORT_SHA="${GITHUB_SHA:0:7}"
           test -s "$APK"
           test -s apk-artifact/MOM_BUILD.txt
           grep -F 'signing_mode=permanent' apk-artifact/MOM_BUILD.txt
-          gh release create "mom-1.1.0-$SHORT_SHA" \
-            "$APK#MOM.apk" \
+          gh release create "mom-1.0.1-$SHORT_SHA" \
+            "$APK#MOM-1.0.1.apk" \
             "apk-artifact/MOM_BUILD.txt#MOM_BUILD.txt" \
-            --repo thekidd0329/Cleantestapp \
-            --title "MOM 1.1.0 ($SHORT_SHA)" \
-            --notes "Unified MOM 1.1.0 APK. The uploaded binary passed source, native-library, identity, permanent-signature, and emulator UI verification."
+            --repo thekidd0329/MOM.app \
+            --title "MOM 1.0.1 ($SHORT_SHA)" \
+            --notes "Public MOM 1.0.1 APK. This binary passed source, native-library, package-identity, permanent-signature, and emulator UI verification and uses Android versionCode 10 for in-place updates from 1.0.1+9."
