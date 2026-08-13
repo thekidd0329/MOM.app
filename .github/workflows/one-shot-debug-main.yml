@@ -1,0 +1,53 @@
+name: One-shot debug main hardening
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/one-shot-debug-main.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Enable tracked debug diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/mom_native/lib/main.dart')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '  WidgetsFlutterBinding.ensureInitialized();\n',
+              "  WidgetsFlutterBinding.ensureInitialized();\n  debugPrint('MOM debug console logging active');\n",
+              1,
+          ) if "MOM debug console logging active" not in text else text
+          text = text.replace(
+              'debugShowCheckedModeBanner: false,',
+              'debugShowCheckedModeBanner: true,',
+          )
+          path.write_text(text, encoding='utf-8')
+          assert "debugPrint('MOM debug console logging active');" in text
+          assert 'debugShowCheckedModeBanner: true,' in text
+          assert 'debugShowCheckedModeBanner: false,' not in text
+          PY
+      - name: Commit tracked debug diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps/mom_native/lib/main.dart; then
+            echo 'main.dart already debug-safe'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/mom_native/lib/main.dart
+          git commit -m 'Keep tracked MOM debug diagnostics enabled'
+          git push
