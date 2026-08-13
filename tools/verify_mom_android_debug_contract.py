@@ -8,6 +8,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 UNIFIED = WORKFLOWS / "mom-native.yml"
 PUBSPEC = ROOT / "apps" / "mom_native" / "pubspec.yaml"
 MAIN = ROOT / "apps" / "mom_native" / "lib" / "main.dart"
+ANDROID_PREP = ROOT / "tools" / "ensure_android_manifest.py"
 
 OBSOLETE_AUTOMATIC_WORKFLOWS = (
     "mom-android-apk.yml",
@@ -30,6 +31,7 @@ def main() -> None:
     )
     pubspec = PUBSPEC.read_text(encoding="utf-8")
     main_source = MAIN.read_text(encoding="utf-8")
+    android_prep = ANDROID_PREP.read_text(encoding="utf-8")
 
     for filename in OBSOLETE_AUTOMATIC_WORKFLOWS:
         require(
@@ -105,6 +107,10 @@ def main() -> None:
         "android-arm64,android-x64" in workflow,
         "universal ARM64/x86_64 target is missing",
     )
+    require(
+        "ensure_android_manifest.py" in workflow,
+        "generated Android workspace hardening is not wired into CI",
+    )
 
     forbidden_release_material = (
         "MOM_ANDROID_KEYSTORE",
@@ -132,6 +138,32 @@ def main() -> None:
     require(
         "builds/latest_android.json" not in all_workflows,
         "build status must be an artifact, not a source commit",
+    )
+
+    require(
+        "GRADLE_FILENAMES = (\"build.gradle\", \"build.gradle.kts\")" in android_prep,
+        "Android workspace prep must cover Groovy and Kotlin Gradle files",
+    )
+    require(
+        'if "signingConfig" in line:' in android_prep,
+        "Android workspace prep must strip release signing configuration",
+    )
+    require(
+        "check_debug_gradle" in android_prep,
+        "Android workspace prep must verify release signing stays removed",
+    )
+    require(
+        "debugShowCheckedModeBanner: false," in android_prep
+        and "debugShowCheckedModeBanner: true," in android_prep,
+        "Android workspace prep must force the debug banner on",
+    )
+    require(
+        "MOM debug console logging active" in android_prep,
+        "Android workspace prep must enable console logging in the debug app",
+    )
+    require(
+        "check_debug_main" in android_prep,
+        "Android workspace prep must verify the generated debug main.dart",
     )
 
     require(
