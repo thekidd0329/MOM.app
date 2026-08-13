@@ -52,7 +52,7 @@ def main() -> None:
     require("git push origin" not in all_workflows, "a workflow still writes commits into a source branch")
     require("builds/latest_android.json" not in all_workflows, "build status must be an artifact, not a source commit")
 
-    require("version: 1.1.0+10" in pubspec, "MOM 1.1.0 package identity is missing")
+    require("version: 1.0.1+10" in pubspec, "MOM 1.0.1 build 10 package identity is missing")
     require("assets/ui/" in pubspec, "MOM's UI assets must remain device-bundled")
     require("assets/runtime_prompt.md" not in pubspec, "server-owned prompt was re-bundled")
     require("assets/knowledge/mom_knowledge.jsonl" not in pubspec, "server-owned knowledge placeholder was re-bundled")
@@ -65,7 +65,7 @@ def main() -> None:
         "legacy raw-cloud-memory claim returned",
     )
 
-    print("MOM 1.1.0 unified release contract OK")
+    print("MOM 1.0.1 build 10 unified release contract OK")
 
 
 if __name__ == "__main__":
