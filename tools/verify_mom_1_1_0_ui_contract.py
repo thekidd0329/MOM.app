@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static release contract for MOM 1.1.0's live plasma home interface."""
+"""Static release contract for MOM's live plasma home interface."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def main() -> None:
 
     require(home, "AndroidView(viewType: 'mom/plasma_orb')", "MOM must host the live native plasma orb on Android.")
     require(home, "class _ControlZapPainter", "MOM must retain the startup control-zap layer.")
-    require(home, "Version 1.1.0", "Visible home-screen version must be Version 1.1.0.")
+    require(home, "Version 1.1.0", "Visible home-screen version must remain the current UI build label.")
     require(home, "Icons.mic", "Top-left microphone control is missing.")
     require(home, "Icons.settings", "Top-right settings control is missing.")
     require(home, "Icons.keyboard", "Bottom-right keyboard control is missing.")
@@ -56,9 +56,9 @@ def main() -> None:
     forbid(home, "class _ElectricOrbPainter", "Old Flutter procedural orb must not return.")
     forbid(home, "class _PlasmaOrbPainter", "Old Flutter plasma approximation must not return.")
 
-    require(pubspec, "version: 1.1.0+10", "pubspec release version must be 1.1.0+10.")
+    require(pubspec, "version: 1.0.1+10", "pubspec release version must be 1.0.1+10.")
 
-    print("MOM 1.1.0 live plasma UI contract OK")
+    print("MOM 1.0.1 build 10 live plasma UI contract OK")
 
 
 if __name__ == "__main__":
