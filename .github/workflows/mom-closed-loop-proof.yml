@@ -6,7 +6,7 @@ on:
     paths:
       - "supabase/functions/mom-brain/**"
       - "supabase/functions/mom-intelligence/**"
-      - "apps/mom_native/assets/runtime_prompt.md"
+      - "core_llm/mamallama/runtime_prompt.md"
       - ".github/workflows/mom-closed-loop-proof.yml"
   workflow_dispatch:
 

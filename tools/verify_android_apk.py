@@ -5,10 +5,12 @@ Usage:
     python3 tools/verify_android_apk.py <apk> <staged-jni-dir> [manifest]
 
 The staged JNI directory is expected to contain the lib*.so files copied into
-android/app/src/main/jniLibs/arm64-v8a before the Flutter release build. MOM's
-required network/microphone declarations and speech-recognition discovery query
-are verified before the APK is accepted. If no manifest path is supplied, it
-is derived from the staged JNI location.
+android/app/src/main/jniLibs/<abi> before the Flutter release build. The ABI is
+derived from the staged directory name, so the same verifier can prove ARM64
+and x86_64 contents in MOM's universal APK. MOM's required network/microphone
+declarations and speech-recognition discovery query are verified before the APK
+is accepted. If no manifest path is supplied, it is derived from the staged JNI
+location.
 """
 
 from __future__ import annotations
@@ -54,6 +56,10 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
     if "libcrispasr.so" not in expected:
         raise ValueError("staged CrispASR library missing before APK verification")
 
+    abi = staged_dir.name
+    if abi not in {"arm64-v8a", "x86_64"}:
+        raise ValueError(f"unsupported staged Android ABI: {abi}")
+
     try:
         with ZipFile(apk) as archive:
             packaged = set(archive.namelist())
@@ -67,7 +73,7 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
     missing = [
         name
         for name in expected
-        if f"lib/arm64-v8a/{name}" not in packaged
+        if f"lib/{abi}/{name}" not in packaged
     ]
     if missing:
         raise ValueError(
@@ -102,7 +108,7 @@ def main(argv: list[str]) -> int:
 
     print(
         f"MOM APK verified: {apk} contains all {len(expected)} staged "
-        f"arm64 native libraries and all {len(declarations)} required "
+        f"{staged_dir.name} native libraries and all {len(declarations)} required "
         "manifest declarations"
     )
     return 0

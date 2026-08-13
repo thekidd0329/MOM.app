@@ -5,13 +5,13 @@ on:
   push:
     branches: [main]
     paths:
-      - "core_llm/mom_identity/runtime_prompt.md"
+      - "core_llm/mamallama/runtime_prompt.md"
       - "tools/validate_mom_runtime_prompt.py"
       - ".github/workflows/mom-runtime-contract.yml"
   pull_request:
     branches: [main]
     paths:
-      - "core_llm/mom_identity/runtime_prompt.md"
+      - "core_llm/mamallama/runtime_prompt.md"
       - "tools/validate_mom_runtime_prompt.py"
       - ".github/workflows/mom-runtime-contract.yml"
 

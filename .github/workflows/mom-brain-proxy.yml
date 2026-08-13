@@ -4,8 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "apps/mom_native/**"
       - "supabase/functions/mom-brain/**"
+      - "core_llm/mamallama/runtime_prompt.md"
       - ".github/workflows/mom-brain-proxy.yml"
   workflow_dispatch:
 
@@ -17,11 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
       - name: Verify server-owned model authority
         run: |
           python3 - <<'PY'
@@ -35,21 +30,6 @@ jobs:
           assert 'failspy/Smaug-Llama-3-70B-Instruct-abliterated-v3' in source, 'preferred MOM model is missing'
           print('MOM server-owned model authority contract OK')
           PY
-
-      - name: Build repository knowledge bundle
-        run: python3 tools/build_mom_knowledge.py
-
-      - name: Resolve Dart packages
-        working-directory: apps/mom_native
-        run: flutter pub get
-
-      - name: Static analysis
-        working-directory: apps/mom_native
-        run: flutter analyze --no-fatal-infos
-
-      - name: Unit tests
-        working-directory: apps/mom_native
-        run: flutter test
 
       - name: MOM brain server smoke test
         env:

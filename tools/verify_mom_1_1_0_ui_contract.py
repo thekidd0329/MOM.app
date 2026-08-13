@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static release contract for MOM 1.0.1's live plasma home interface."""
+"""Static release contract for MOM's live plasma home interface."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def main() -> None:
 
     require(home, "AndroidView(viewType: 'mom/plasma_orb')", "MOM must host the live native plasma orb on Android.")
     require(home, "class _ControlZapPainter", "MOM must retain the startup control-zap layer.")
-    require(home, "Version 1.0.1", "Visible home-screen version must be Version 1.0.1.")
+    require(home, "Version 1.1.0", "Visible home-screen version must remain the current UI build label.")
     require(home, "Icons.mic", "Top-left microphone control is missing.")
     require(home, "Icons.settings", "Top-right settings control is missing.")
     require(home, "Icons.keyboard", "Bottom-right keyboard control is missing.")
@@ -44,21 +44,21 @@ def main() -> None:
 
     require(plasma, "class PlasmaOrbView", "Native PlasmaOrbView is missing.")
     require(plasma, "postInvalidateOnAnimation()", "Native plasma orb must animate continuously.")
-    require(plasma, "BlurMaskFilter(15f", "Matt's purple plasma glow is missing.")
-    require(plasma, "val numberOfBranches = 8", "Matt's eight primary plasma branches are missing.")
-    require(plasma, "val edgeArcsCount = 4", "Matt's moving edge arcs are missing.")
+    require(plasma, "BlurMaskFilter(15f", "Purple plasma glow is missing.")
+    require(plasma, "val numberOfBranches = 8", "Eight primary plasma branches are missing.")
+    require(plasma, "val edgeArcsCount = 4", "Moving edge arcs are missing.")
 
     require(main_activity, '"mom/plasma_orb"', "Android platform-view registration is missing.")
     require(main_activity, "PlasmaOrbViewFactory", "Android plasma platform-view factory is missing.")
 
-    forbid(home, "assets/ui/2546.png", "Static 2546 artwork must not be the production orb path.")
+    forbid(home, "assets/ui/2546.png", "Static 2546 artwork must not replace the live production orb.")
     forbid(home, "Image.asset(", "Production orb must be live, not a static image widget.")
     forbid(home, "class _ElectricOrbPainter", "Old Flutter procedural orb must not return.")
     forbid(home, "class _PlasmaOrbPainter", "Old Flutter plasma approximation must not return.")
 
-    require(pubspec, "version: 1.0.1+9", "pubspec release version must remain 1.0.1+9.")
+    require(pubspec, "version: 1.0.1+10", "pubspec release version must be 1.0.1+10.")
 
-    print("MOM 1.0.1 live plasma UI contract OK")
+    print("MOM 1.0.1 build 10 live plasma UI contract OK")
 
 
 if __name__ == "__main__":
