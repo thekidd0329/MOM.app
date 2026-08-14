@@ -47,13 +47,36 @@ const corsHeaders = {
 function json(status: number, value: unknown) {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json; charset=utf-8" },
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
   });
 }
 
 function safeText(value: unknown, max: number, fallback = "") {
   if (typeof value !== "string") return fallback;
   return value.trim().slice(0, max);
+}
+
+function containsForbiddenField(value: unknown, forbidden: Set<string>) {
+  const pending: unknown[] = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    if (++visited > 10000) return true;
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    if (Array.isArray(current)) {
+      for (const nested of current) pending.push(nested);
+      continue;
+    }
+    for (const [key, nested] of Object.entries(current as Record<string, unknown>)) {
+      if (forbidden.has(key)) return true;
+      pending.push(nested);
+    }
+  }
+  return false;
 }
 
 function isUuid(value: string) {
@@ -192,6 +215,8 @@ Deno.serve(async (req: Request) => {
       configured: (await getHfToken()).length > 0,
       provider: "huggingface",
       transport: "sse",
+      input_transport: "text",
+      audio_input_accepted: false,
       configured_model: CONFIGURED_MODEL || null,
       client_system_prompt_accepted: false,
       client_model_override_accepted: false,
@@ -203,8 +228,22 @@ Deno.serve(async (req: Request) => {
   }
   if (action !== "chat_stream") return json(400, { error: "unknown_action" });
 
-  const installation = await authenticate(req);
-  if (!installation) return json(401, { error: "invalid_installation_token" });
+  const forbiddenAudioFields = new Set([
+    "audio", "audio_bytes", "audio_base64", "audio_url", "pcm", "wav", "recording", "recording_url",
+  ]);
+  if (containsForbiddenField(body, forbiddenAudioFields)) {
+    return json(400, { error: "audio_input_forbidden" });
+  }
+  const inputTransport = Object.prototype.hasOwnProperty.call(body, "input_transport")
+    ? safeText(body.input_transport, 20)
+    : "text";
+  const invalidAudioDeclaration =
+    Object.prototype.hasOwnProperty.call(body, "audio_uploaded") && body.audio_uploaded !== false;
+  if (inputTransport !== "text" || invalidAudioDeclaration) {
+    return json(400, { error: "text_input_required" });
+  }
+
+  if (!(await authenticate(req))) return json(401, { error: "invalid_installation_token" });
   if (!(await getHfToken())) return json(503, { error: "hf_secret_missing" });
 
   const userText = safeText(body.user_text, 50000);
@@ -306,7 +345,7 @@ Deno.serve(async (req: Request) => {
       headers: {
         ...corsHeaders,
         "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
+        "Cache-Control": "no-store, no-transform",
         Connection: "keep-alive",
       },
     });

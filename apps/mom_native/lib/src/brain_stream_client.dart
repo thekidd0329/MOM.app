@@ -108,6 +108,8 @@ class MomBrainStreamClient {
       ..headers.addAll(await _headers())
       ..body = jsonEncode({
         'action': 'chat_stream',
+        'input_transport': 'text',
+        'audio_uploaded': false,
         'history': history,
         'user_text': userText,
         'temperature': temperature,

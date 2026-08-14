@@ -8,8 +8,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:crispasr/crispasr.dart' as crisp;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
+import 'on_device_speech_recognizer.dart';
 import 'partial_redirector.dart';
 import 'transcript_quality.dart';
 import 'tts_chunker.dart';
@@ -58,7 +58,10 @@ bool looksLikeMomSpeakerEcho(String candidate, String momSpeech) {
 }
 
 class MomVoiceService {
-  final SpeechToText _speech = SpeechToText();
+  MomVoiceService({MomSpeechRecognizer? speechRecognizer})
+      : _speech = speechRecognizer ?? AndroidOnDeviceSpeechRecognizer();
+
+  final MomSpeechRecognizer _speech;
   final AudioPlayer _player = AudioPlayer();
   final MomTtsChunker _chunker = const MomTtsChunker();
   final MomPartialRedirector _redirector = const MomPartialRedirector();
@@ -95,6 +98,8 @@ class MomVoiceService {
   bool get listening => _speech.isListening;
   MomVoiceException? get lastFailure => _lastFailure;
   bool get handsFreeArmed => _handsFreeArmed;
+  String get recognitionMode => _speech.mode;
+  bool get strictlyOnDeviceRecognition => _speech.strictlyOnDevice;
 
   Future<bool> initialize() async {
     try {
@@ -122,18 +127,7 @@ class MomVoiceService {
       _speechReady = false;
       _lastFailure = MomVoiceException('speech_recognition', error);
     }
-    unawaited(_warmVoiceAssets());
     return _speechReady;
-  }
-
-  Future<void> _warmVoiceAssets() async {
-    try {
-      await _prepareVoiceAssets();
-    } catch (error) {
-      _lastFailure = error is MomVoiceException
-          ? error
-          : MomVoiceException('assets', error);
-    }
   }
 
   Future<_VoiceAssets> _prepareVoiceAssets() async {
@@ -213,20 +207,17 @@ class MomVoiceService {
           );
           _listenGuard.complete(listenGeneration);
           _lastMeaningfulPartial = '';
-          if (_speech.isListening) await _speech.stop();
+          if (_speech.isListening) await _speech.cancel();
           onState(false);
           _scheduleHandsFreeResume(delay: const Duration(milliseconds: 650));
         }());
       },
     );
 
-    onState(true);
     try {
       await _speech.listen(
-        listenOptions: SpeechListenOptions(
-          partialResults: true,
-          cancelOnError: true,
-        ),
+        partialResults: true,
+        cancelOnError: true,
         onResult: (result) {
           if (!_listenGuard.isCurrent(listenGeneration)) return;
           final text = result.recognizedWords.trim();
@@ -273,6 +264,9 @@ class MomVoiceService {
           onState(false);
         },
       );
+      if (_speech.isListening && _listenGuard.isCurrent(listenGeneration)) {
+        onState(true);
+      }
       if (!_speech.isListening &&
           _listenGuard.isCurrent(listenGeneration) &&
           !_redirectInFlight &&
@@ -298,7 +292,7 @@ class MomVoiceService {
     required void Function(bool listening) onState,
   }) async {
     try {
-      if (_speech.isListening) await _speech.stop();
+      if (_speech.isListening) await _speech.cancel();
       onState(false);
       _redirectCooldownUntil = DateTime.now().add(const Duration(seconds: 20));
       try {
@@ -326,7 +320,7 @@ class MomVoiceService {
     required void Function(bool listening) onState,
   }) async {
     try {
-      if (_speech.isListening) await _speech.stop();
+      if (_speech.isListening) await _speech.cancel();
       onState(false);
       _redirectCooldownUntil = DateTime.now().add(const Duration(seconds: 10));
       try {
@@ -365,12 +359,10 @@ class MomVoiceService {
     _listeningState = null;
 
     try {
-      if (_speech.isListening) await _speech.stop();
+      if (_speech.isListening) await _speech.cancel();
       await _speech.listen(
-        listenOptions: SpeechListenOptions(
-          partialResults: true,
-          cancelOnError: false,
-        ),
+        partialResults: true,
+        cancelOnError: false,
         onResult: (result) {
           if (generation != _bargeInGeneration) return;
           final text = result.recognizedWords.trim();
@@ -427,7 +419,7 @@ class MomVoiceService {
     _bargeInGeneration++;
     _bargeInDetected = false;
     _bargeInError = null;
-    if (_speech.isListening) await _speech.stop();
+    if (_speech.isListening) await _speech.cancel();
   }
 
   Future<void> stopListening() async {
@@ -439,7 +431,7 @@ class MomVoiceService {
     _bargeInGeneration++;
     _bargeInError = null;
     _lastMeaningfulPartial = '';
-    await _speech.stop();
+    await _speech.cancel();
     _listeningState?.call(false);
     _listeningState = null;
   }
@@ -861,7 +853,7 @@ class MomVoiceService {
     _bargeInError = null;
     _lastMeaningfulPartial = '';
     _clearSpeechTracking();
-    await _speech.stop();
+    await _speech.dispose();
     await _player.stop();
     await _player.dispose();
     final playing = _playingFile;

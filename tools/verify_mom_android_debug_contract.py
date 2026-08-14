@@ -8,6 +8,36 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 UNIFIED = WORKFLOWS / "mom-native.yml"
 PUBSPEC = ROOT / "apps" / "mom_native" / "pubspec.yaml"
 MAIN = ROOT / "apps" / "mom_native" / "lib" / "main.dart"
+HOME = ROOT / "apps" / "mom_native" / "lib" / "src" / "mom_home_screen.dart"
+VOICE = ROOT / "apps" / "mom_native" / "lib" / "src" / "voice_service.dart"
+ON_DEVICE_SPEECH = (
+    ROOT
+    / "apps"
+    / "mom_native"
+    / "lib"
+    / "src"
+    / "on_device_speech_recognizer.dart"
+)
+ANDROID_ACTIVITY = (
+    ROOT
+    / "apps"
+    / "mom_native"
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "kotlin"
+    / "app"
+    / "mom"
+    / "mom_native"
+    / "MainActivity.kt"
+)
+BRAIN_CLIENT = (
+    ROOT / "apps" / "mom_native" / "lib" / "src" / "brain_stream_client.dart"
+)
+BRAIN_STREAM = ROOT / "supabase" / "functions" / "mom-brain-stream" / "index.ts"
+MOM_SYNC = ROOT / "supabase" / "functions" / "mom-sync" / "index.ts"
+MOM_INTELLIGENCE = ROOT / "supabase" / "functions" / "mom-intelligence" / "index.ts"
 ANDROID_PREP = ROOT / "tools" / "ensure_android_manifest.py"
 
 OBSOLETE_AUTOMATIC_WORKFLOWS = (
@@ -31,6 +61,14 @@ def main() -> None:
     )
     pubspec = PUBSPEC.read_text(encoding="utf-8")
     main_source = MAIN.read_text(encoding="utf-8")
+    home = HOME.read_text(encoding="utf-8")
+    voice = VOICE.read_text(encoding="utf-8")
+    on_device_speech = ON_DEVICE_SPEECH.read_text(encoding="utf-8")
+    android_activity = ANDROID_ACTIVITY.read_text(encoding="utf-8")
+    brain_client = BRAIN_CLIENT.read_text(encoding="utf-8")
+    brain_stream = BRAIN_STREAM.read_text(encoding="utf-8")
+    mom_sync = MOM_SYNC.read_text(encoding="utf-8")
+    mom_intelligence = MOM_INTELLIGENCE.read_text(encoding="utf-8")
     android_prep = ANDROID_PREP.read_text(encoding="utf-8")
 
     for filename in OBSOLETE_AUTOMATIC_WORKFLOWS:
@@ -187,6 +225,54 @@ def main() -> None:
         not in main_source,
         "legacy raw-cloud-memory claim returned",
     )
+
+    require(
+        "speech_to_text" not in pubspec and "SpeechToText" not in voice,
+        "network-capable speech_to_text dependency returned",
+    )
+    require(
+        "AndroidOnDeviceSpeechRecognizer" in voice,
+        "voice service is not wired to the strict Android recognizer",
+    )
+    require(
+        "isOnDeviceRecognitionAvailable" in android_activity
+        and "createOnDeviceSpeechRecognizer" in android_activity,
+        "Android on-device SpeechRecognizer factory is missing",
+    )
+    require(
+        "SpeechRecognizer.createSpeechRecognizer(" not in android_activity,
+        "generic SpeechRecognizer fallback would permit remote recognition",
+    )
+    require(
+        "package:http" not in on_device_speech and "dart:io" not in on_device_speech,
+        "Flutter speech adapter must not contain a network transport",
+    )
+    require(
+        "onBufferReceived(buffer: ByteArray?) = Unit" in android_activity,
+        "Android bridge must explicitly discard recognizer audio buffers",
+    )
+    require(
+        "return widget.status == 'online' ? 'Ready' : widget.status;" in home,
+        "idle home state must say Ready instead of Listening",
+    )
+    require(
+        "'input_transport': 'text'" in brain_client
+        and "'audio_uploaded': false" in brain_client,
+        "Supabase brain request must declare text-only input",
+    )
+    require(
+        "audio_input_forbidden" in brain_stream
+        and "audio_input_accepted: false" in brain_stream,
+        "mom-brain-stream must reject audio input and advertise the boundary",
+    )
+    for source, name in (
+        (mom_sync, "mom-sync"),
+        (mom_intelligence, "mom-intelligence"),
+    ):
+        require(
+            '"audio_bytes"' in source and '"recording_url"' in source,
+            f"{name} must reject audio-bearing payload fields",
+        )
 
     print("MOM fast ARM64 debug-only CI contract OK")
 

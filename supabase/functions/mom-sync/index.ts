@@ -36,6 +36,25 @@ function safeText(value: unknown, max: number, fallback = "") {
   return value.trim().slice(0, max);
 }
 
+function containsForbiddenField(value: unknown, forbidden: Set<string>) {
+  const pending: unknown[] = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    if (++visited > 10000) return true;
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    if (Array.isArray(current)) {
+      for (const nested of current) pending.push(nested);
+      continue;
+    }
+    for (const [key, nested] of Object.entries(current as Record<string, unknown>)) {
+      if (forbidden.has(key)) return true;
+      pending.push(nested);
+    }
+  }
+  return false;
+}
+
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -160,8 +179,11 @@ Deno.serve(async (req: Request) => {
 
     // Runtime telemetry must remain content-free. Refuse fields that could be
     // used to sneak transcript or memory text through the event channel.
-    const forbidden = ["content", "raw_text", "source_excerpt", "message", "prompt", "transcript"];
-    if (forbidden.some((key) => Object.prototype.hasOwnProperty.call(payload, key))) {
+    const forbidden = new Set([
+      "content", "raw_text", "source_excerpt", "message", "prompt", "transcript",
+      "audio", "audio_bytes", "audio_base64", "audio_url", "pcm", "wav", "recording", "recording_url",
+    ]);
+    if (containsForbiddenField(payload, forbidden)) {
       return response(400, { error: "event_content_forbidden" });
     }
 

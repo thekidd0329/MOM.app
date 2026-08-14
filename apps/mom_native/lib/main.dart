@@ -248,12 +248,14 @@ class _MomAppState extends State<MomApp> {
           .where((turn) => turn.role == 'assistant')
           .toList(growable: false);
       _microphone = await _micProbe.probe();
-      await _voice.initialize();
+      final speechReady = await _voice.initialize();
 
       if (Platform.isLinux && config.useLocalLlama) {
         setState(() => _status = 'starting local brain');
         final local = await _llama.ensureRunning(config);
         _status = local.running ? 'online' : local.message;
+      } else if (Platform.isAndroid && !speechReady) {
+        _status = 'On-device speech unavailable · text works';
       } else {
         _status = 'online';
       }
@@ -266,6 +268,10 @@ class _MomAppState extends State<MomApp> {
           'startup_discovery_complete': _discovery.complete,
           'startup_discovery_answers': _discovery.answeredCount,
           'microphone': _microphone.toJson(),
+          'speech_recognition': _voice.recognitionMode,
+          'speech_strictly_on_device':
+              _voice.strictlyOnDeviceRecognition,
+          'speech_available': speechReady,
         }));
       }
     } catch (_) {
@@ -394,12 +400,6 @@ class _MomAppState extends State<MomApp> {
       return;
     }
 
-    if (_voiceState.state == MomVoiceState.interrupted) {
-      _setVoiceState(MomVoiceState.listening);
-    } else {
-      _setVoiceState(MomVoiceState.listening);
-    }
-
     try {
       await _voice.listen(
         onState: _handleVoiceListeningState,
@@ -446,6 +446,9 @@ class _MomAppState extends State<MomApp> {
       metadata: {
         'input_mode': inputMode,
         'microphone': _microphone.toJson(),
+        if (inputMode == 'voice')
+          'speech_recognition': _voice.recognitionMode,
+        if (inputMode == 'voice') 'raw_audio_uploaded': false,
       },
     );
     _setVoiceState(MomVoiceState.thinking);
@@ -460,6 +463,9 @@ class _MomAppState extends State<MomApp> {
       'characters': text.length,
       'input_mode': inputMode,
       'microphone': _microphone.toJson(),
+      if (inputMode == 'voice')
+        'speech_recognition': _voice.recognitionMode,
+      if (inputMode == 'voice') 'raw_audio_uploaded': false,
     }));
 
     final started = DateTime.now();

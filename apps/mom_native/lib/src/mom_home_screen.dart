@@ -181,7 +181,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
   String get _statusLabel {
     if (widget.busy) return 'Thinking...';
     if (widget.listening) return 'Listening...';
-    return widget.status == 'online' ? 'Listening...' : widget.status;
+    return widget.status == 'online' ? 'Ready' : widget.status;
   }
 
   @override

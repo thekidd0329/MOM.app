@@ -25,6 +25,25 @@ function safeText(value: unknown, max = 1000, fallback = "") {
   return typeof value === "string" ? value.trim().slice(0, max) : fallback;
 }
 
+function containsForbiddenField(value: unknown, forbidden: Set<string>) {
+  const pending: unknown[] = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    if (++visited > 10000) return true;
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    if (Array.isArray(current)) {
+      for (const nested of current) pending.push(nested);
+      continue;
+    }
+    for (const [key, nested] of Object.entries(current as Record<string, unknown>)) {
+      if (forbidden.has(key)) return true;
+      pending.push(nested);
+    }
+  }
+  return false;
+}
+
 function safeError(error: unknown) {
   if (error instanceof Error) return error.message;
   try { return JSON.stringify(error); } catch { return String(error); }
@@ -139,10 +158,11 @@ function temporalLikely(text: string) {
 }
 
 async function processDeidentified(req: Request, installation: any, body: any) {
-  const forbiddenFields = [
+  const forbiddenFields = new Set([
     "user_text", "raw_text", "content", "source_excerpt", "session_id", "device_id", "user_id",
-  ];
-  if (forbiddenFields.some((field) => Object.prototype.hasOwnProperty.call(body, field))) {
+    "audio", "audio_bytes", "audio_base64", "audio_url", "pcm", "wav", "recording", "recording_url",
+  ]);
+  if (containsForbiddenField(body, forbiddenFields)) {
     return json(400, { error: "privacy_boundary_violation" });
   }
   if (safeText(body.privacy_version, 40) !== "deid-v1") {
@@ -367,6 +387,7 @@ Deno.serve(async (req: Request) => {
       configured: brain.ok && data?.configured === true,
       privacy_version: "deid-v1",
       raw_text_accepted: false,
+      audio_input_accepted: false,
       detached_research_corpus: true,
       content_preview_available: false,
       bounded_brain_agents: true,
