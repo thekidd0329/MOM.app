@@ -181,7 +181,6 @@ class _MomHomeScreenState extends State<MomHomeScreen>
 
   PlasmaOrbState get _orbState {
     if (widget.listening) return PlasmaOrbState.listening;
-    if (widget.busy) return PlasmaOrbState.thinking;
 
     final normalized = widget.status.toLowerCase();
     if (normalized.contains('speak') || normalized.contains('talk')) {
@@ -192,6 +191,7 @@ class _MomHomeScreenState extends State<MomHomeScreen>
         normalized.contains('unavailable')) {
       return PlasmaOrbState.error;
     }
+    if (widget.busy) return PlasmaOrbState.thinking;
     return PlasmaOrbState.idle;
   }
 
