@@ -10,6 +10,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/ui/
+    - assets/photopea_background_remover_1786650252951.png
 
 dependencies:
   flutter:
