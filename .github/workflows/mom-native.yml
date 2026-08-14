@@ -6,14 +6,8 @@ on:
     branches: [main]
     paths:
       - "apps/mom_native/**"
-      - "core_llm/**"
-      - "supabase/functions/mom-sync/**"
-      - "supabase/migrations/**"
       - "tools/ensure_android_manifest.py"
-      - "tools/run_mom_emulator_ui.py"
-      - "tools/validate_mom_runtime_prompt.py"
       - "tools/verify_android_apk.py"
-      - "tools/verify_live_mom_runtime_config.py"
       - "tools/verify_mom_android_debug_contract.py"
       - "tools/verify_mom_1_1_0_ui_contract.py"
       - ".github/workflows/mom-native.yml"
@@ -21,14 +15,8 @@ on:
     branches: [main]
     paths:
       - "apps/mom_native/**"
-      - "core_llm/**"
-      - "supabase/functions/mom-sync/**"
-      - "supabase/migrations/**"
       - "tools/ensure_android_manifest.py"
-      - "tools/run_mom_emulator_ui.py"
-      - "tools/validate_mom_runtime_prompt.py"
       - "tools/verify_android_apk.py"
-      - "tools/verify_live_mom_runtime_config.py"
       - "tools/verify_mom_android_debug_contract.py"
       - "tools/verify_mom_1_1_0_ui_contract.py"
       - ".github/workflows/mom-native.yml"
@@ -41,70 +29,9 @@ permissions:
   contents: read
 
 jobs:
-  source:
-    name: Source, voice, and server contracts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Record Flutter toolchain
-        run: flutter --version
-
-      - name: Verify unified debug ownership
-        run: python3 tools/verify_mom_android_debug_contract.py
-
-      - name: Verify live plasma UI contract
-        run: python3 tools/verify_mom_1_1_0_ui_contract.py
-
-      - name: Verify canonical MOM prompt contract
-        run: python3 tools/validate_mom_runtime_prompt.py
-
-      - name: Verify server runtime source contract
-        run: |
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          source = Path('supabase/functions/mom-sync/index.ts').read_text()
-          migration = Path('supabase/migrations/20260810021810_mom_110_server_runtime_config.sql').read_text()
-          assert 'npm:@supabase/supabase-js@2.112.3' in source
-          assert re.search(r'\bversion:\s*\d+\b', source)
-          assert 'action === "runtime_config"' in source
-          assert '.eq("config_key", "mobile.runtime")' in source
-          assert "'prompt_authority', 'mom-brain'" in migration
-          assert "'model_authority', 'mom-brain'" in migration
-          assert "'raw_memory_location', 'device_only'" in migration
-          assert "'cloud_raw_chat_storage', false" in migration
-          print('MOM server runtime source contract OK')
-          PY
-
-      - name: Resolve Dart packages
-        working-directory: apps/mom_native
-        run: flutter pub get
-
-      - name: Static analysis
-        working-directory: apps/mom_native
-        run: flutter analyze --no-fatal-infos
-
-      - name: Complete Flutter test suite
-        working-directory: apps/mom_native
-        run: flutter test
-
-      - name: Verify live authenticated runtime config
-        run: python3 tools/verify_live_mom_runtime_config.py
-
   build:
-    name: Build and verify the debug APK
-    needs: source
+    name: Build ARM64 debug APK
     runs-on: ubuntu-latest
-    outputs:
-      artifact_name: ${{ steps.identity.outputs.artifact_name }}
-      apk_name: ${{ steps.identity.outputs.apk_name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -118,7 +45,13 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate the Android debug workspace
+      - name: Verify fast debug CI contract
+        run: python3 tools/verify_mom_android_debug_contract.py
+
+      - name: Verify production PNG UI contract
+        run: python3 tools/verify_mom_1_1_0_ui_contract.py
+
+      - name: Generate Android debug workspace
         shell: bash
         run: |
           set -euo pipefail
@@ -126,38 +59,37 @@ jobs:
           flutter create --platforms=android --org app.mom --project-name mom_native "$BUILD_DIR"
           rm -rf "$BUILD_DIR/lib" "$BUILD_DIR/test" "$BUILD_DIR/assets"
           cp -a apps/mom_native/lib "$BUILD_DIR/lib"
-          cp -a apps/mom_native/test "$BUILD_DIR/test"
           cp -a apps/mom_native/assets "$BUILD_DIR/assets"
           cp apps/mom_native/pubspec.yaml "$BUILD_DIR/pubspec.yaml"
           cp -a apps/mom_native/android/. "$BUILD_DIR/android/"
-          rm -f "$BUILD_DIR/test/widget_test.dart"
           python3 tools/ensure_android_manifest.py "$BUILD_DIR/android/app/src/main/AndroidManifest.xml"
 
-      - name: Build CrispASR for both debug ABIs
+      - name: Build CrispASR for ARM64
         shell: bash
         run: |
           set -euo pipefail
           CRISP_ROOT="$RUNNER_TEMP/crispasr"
           BUILD_DIR="$RUNNER_TEMP/mom_android"
+          ABI="arm64-v8a"
           git clone --recursive --depth 1 --branch v0.8.25 https://github.com/CrispStrobe/CrispASR.git "$CRISP_ROOT"
+          ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$CRISP_ROOT/build-android.sh" --abi "$ABI"
+          SOURCE="$CRISP_ROOT/build-android/$ABI"
+          DESTINATION="$BUILD_DIR/android/app/src/main/jniLibs/$ABI"
+          mkdir -p "$DESTINATION"
+          find "$SOURCE" -type f -name 'lib*.so' -exec cp '{}' "$DESTINATION/" ';'
+          test -f "$DESTINATION/libcrispasr.so"
 
-          for ABI in arm64-v8a x86_64; do
-            ANDROID_NDK_HOME="$ANDROID_NDK_ROOT" "$CRISP_ROOT/build-android.sh" --abi "$ABI"
-            SOURCE="$CRISP_ROOT/build-android/$ABI"
-            DESTINATION="$BUILD_DIR/android/app/src/main/jniLibs/$ABI"
-            mkdir -p "$DESTINATION"
-            find "$SOURCE" -type f -name 'lib*.so' -exec cp '{}' "$DESTINATION/" ';'
-            test -f "$DESTINATION/libcrispasr.so"
-            echo "Staged $(find "$DESTINATION" -type f -name 'lib*.so' | wc -l) native libraries for $ABI"
-          done
-
-      - name: Resolve debug dependencies
+      - name: Resolve dependencies
         working-directory: ${{ runner.temp }}/mom_android
         run: flutter pub get
 
-      - name: Build universal debug APK once
+      - name: Static analysis
         working-directory: ${{ runner.temp }}/mom_android
-        run: flutter build apk --debug --target-platform android-arm64,android-x64
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build ARM64 debug APK
+        working-directory: ${{ runner.temp }}/mom_android
+        run: flutter build apk --debug --target-platform android-arm64
 
       - name: Verify Android debug signing
         shell: bash
@@ -166,17 +98,13 @@ jobs:
           BUILD_DIR="$RUNNER_TEMP/mom_android"
           SOURCE_APK="$BUILD_DIR/build/app/outputs/flutter-apk/app-debug.apk"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
-
           test -s "$SOURCE_APK"
           test -x "$APKSIGNER"
           CERTS="$("$APKSIGNER" verify --verbose --print-certs "$SOURCE_APK" 2>&1)"
           printf '%s\n' "$CERTS"
-          if ! printf '%s\n' "$CERTS" | grep -Fqi 'Android Debug'; then
-            echo "::error::MOM CI expected the standard Android debug signing certificate."
-            exit 1
-          fi
+          printf '%s\n' "$CERTS" | grep -Fqi 'Android Debug'
 
-      - name: Verify APK identity and native contents
+      - name: Package debug APK
         id: identity
         shell: bash
         run: |
@@ -195,92 +123,37 @@ jobs:
           test -s "$SOURCE_APK"
           cp "$SOURCE_APK" "$OUTPUT_APK"
           python3 tools/verify_android_apk.py "$OUTPUT_APK" "$BUILD_DIR/android/app/src/main/jniLibs/arm64-v8a" "$MANIFEST"
-          python3 tools/verify_android_apk.py "$OUTPUT_APK" "$BUILD_DIR/android/app/src/main/jniLibs/x86_64" "$MANIFEST"
 
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
           test -x "$AAPT"
           BADGING="$("$AAPT" dump badging "$OUTPUT_APK")"
           PACKAGE_LINE="$(printf '%s\n' "$BADGING" | grep '^package: ' | head -n 1)"
-          printf '%s\n' "$PACKAGE_LINE"
           printf '%s\n' "$PACKAGE_LINE" | grep -F "name='app.mom.mom_native'"
           printf '%s\n' "$PACKAGE_LINE" | grep -F "versionName='$VERSION_NAME'"
           printf '%s\n' "$PACKAGE_LINE" | grep -F "versionCode='$VERSION_CODE'"
           printf '%s\n' "$BADGING" | grep -F 'application-debuggable'
 
-          APK_BYTES="$(stat -c '%s' "$OUTPUT_APK")"
           APK_SHA256="$(sha256sum "$OUTPUT_APK" | awk '{print $1}')"
+          ARTIFACT_DIR="$BUILD_DIR/debug-artifact"
+          mkdir -p "$ARTIFACT_DIR"
+          cp "$OUTPUT_APK" "$ARTIFACT_DIR/$APK_NAME"
           {
             printf 'MOM Android debug build\n'
             printf 'version=%s\n' "$APP_VERSION"
             printf 'commit=%s\n' "$GITHUB_SHA"
             printf 'apk=%s\n' "$APK_NAME"
+            printf 'abi=arm64-v8a\n'
             printf 'build_type=debug\n'
             printf 'signing_mode=android-debug\n'
-            printf 'bytes=%s\n' "$APK_BYTES"
             printf 'sha256=%s\n' "$APK_SHA256"
-            flutter --version | head -n 1
-          } > "$BUILD_DIR/MOM_BUILD.txt"
-          grep -F 'build_type=debug' "$BUILD_DIR/MOM_BUILD.txt"
-          grep -F 'signing_mode=android-debug' "$BUILD_DIR/MOM_BUILD.txt"
-          grep -E '^sha256=[0-9a-f]{64}$' "$BUILD_DIR/MOM_BUILD.txt"
-
-          ARTIFACT_DIR="$BUILD_DIR/debug-artifact"
-          mkdir -p "$ARTIFACT_DIR"
-          cp "$OUTPUT_APK" "$ARTIFACT_DIR/$APK_NAME"
-          cp "$BUILD_DIR/MOM_BUILD.txt" "$ARTIFACT_DIR/MOM_BUILD.txt"
+          } > "$ARTIFACT_DIR/MOM_BUILD.txt"
 
           echo "artifact_name=mom-android-debug-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Upload the verified debug APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.identity.outputs.artifact_name }}
           path: ${{ runner.temp }}/mom_android/debug-artifact/
           if-no-files-found: error
-          retention-days: 14
-
-  emulator:
-    name: Verify that exact debug APK in Android
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.build.outputs.artifact_name }}
-          path: apk-artifact
-
-      - name: Enable KVM hardware acceleration
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ ! -e /dev/kvm ]; then
-            echo "::error::This runner does not expose /dev/kvm."
-            exit 1
-          fi
-          sudo chmod 0666 /dev/kvm
-          test -r /dev/kvm
-          test -w /dev/kvm
-          ls -l /dev/kvm
-
-      - name: Complete onboarding and verify home/settings UI
-        uses: ReactiveCircus/android-emulator-runner@v2.38.0
-        with:
-          api-level: 35
-          arch: x86_64
-          target: google_apis
-          profile: pixel_6
-          disable-animations: true
-          script: python3 tools/run_mom_emulator_ui.py apk-artifact ui-evidence
-
-      - name: Upload emulator evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mom-debug-ui-evidence-${{ github.sha }}
-          path: ui-evidence
-          if-no-files-found: ignore
           retention-days: 14

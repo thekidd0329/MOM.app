@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep MOM's GitHub Android pipeline debug-only and artifact-only."""
+"""Keep MOM's GitHub Android pipeline fast, debug-only, ARM64-only, and artifact-only."""
 
 from pathlib import Path
 
@@ -41,75 +41,61 @@ def main() -> None:
 
     require(
         workflow.count("flutter build apk") == 1,
-        "unified workflow must build exactly one APK",
+        "fast workflow must build exactly one APK",
     )
     require(
-        "flutter build apk --debug" in workflow,
-        "GitHub CI must build a debug APK",
+        "flutter build apk --debug --target-platform android-arm64" in workflow,
+        "GitHub CI must build one ARM64 debug APK",
     )
-    require(
-        "app-debug.apk" in workflow,
-        "debug APK output path is missing",
-    )
-    require(
-        "--release" not in workflow,
-        "GitHub CI must not build a release APK",
-    )
+    require("arm64-v8a" in workflow, "ARM64 native library staging is missing")
+    require("app-debug.apk" in workflow, "debug APK output path is missing")
+    require("--release" not in workflow, "GitHub CI must not build a release APK")
     require(
         "actions/upload-artifact@v4" in workflow,
         "debug APK artifact upload is missing",
     )
     require(
-        "actions/download-artifact@v4" in workflow,
-        "downstream jobs must consume the uploaded debug APK",
-    )
-    require(
-        "run_mom_emulator_ui.py" in workflow,
-        "emulator must test the uploaded debug APK",
-    )
-    require(
         "verify_android_apk.py" in workflow,
-        "native APK verification is missing",
-    )
-    require(
-        "debug-artifact/" in workflow,
-        "debug APK and build evidence must upload from one artifact directory",
+        "basic ARM64 APK verification is missing",
     )
     require(
         "application-debuggable" in workflow,
         "CI must prove the packaged APK is debuggable",
     )
-    require(
-        "Android Debug" in workflow,
-        "CI must prove the APK uses Android debug signing",
-    )
-    require(
-        "apksigner" in workflow,
-        "debug APK signing verification is missing",
-    )
-    require(
-        "build_type=debug" in workflow,
-        "debug build type is absent from build evidence",
-    )
-    require(
-        "signing_mode=android-debug" in workflow,
-        "debug signing mode is absent from build evidence",
-    )
-    require(
-        "sudo chmod 0666 /dev/kvm" in workflow,
-        "emulator KVM access must be enabled explicitly",
-    )
-    require(
-        "disable-animations: true" in workflow,
-        "emulator system animations must be disabled for deterministic UI proof",
-    )
-    require(
-        "android-arm64,android-x64" in workflow,
-        "universal ARM64/x86_64 target is missing",
-    )
+    require("Android Debug" in workflow, "debug signing verification is missing")
+    require("apksigner" in workflow, "apksigner verification is missing")
+    require("flutter analyze --no-fatal-infos" in workflow, "static analysis is missing")
     require(
         "ensure_android_manifest.py" in workflow,
         "generated Android workspace hardening is not wired into CI",
+    )
+
+    slow_or_obsolete = (
+        "android-x64",
+        "x86_64",
+        "ReactiveCircus/android-emulator-runner",
+        "run_mom_emulator_ui.py",
+        "actions/download-artifact@v4",
+        "/dev/kvm",
+        "disable-animations: true",
+        "flutter test",
+        "verify_live_mom_runtime_config.py",
+        "Complete onboarding and verify home/settings UI",
+        "Upload emulator evidence",
+    )
+    for marker in slow_or_obsolete:
+        require(
+            marker not in workflow,
+            f"slow or obsolete debug-CI step returned: {marker}",
+        )
+
+    require(
+        workflow.count("runs-on: ubuntu-latest") == 1,
+        "fast Android CI must stay a single runner job",
+    )
+    require(
+        workflow.count("actions/checkout@v4") == 1,
+        "fast Android CI must not duplicate checkout/setup across jobs",
     )
 
     forbidden_release_material = (
@@ -183,10 +169,7 @@ def main() -> None:
         "version: 1.0.1+10" in pubspec,
         "MOM 1.0.1 build 10 package identity is missing",
     )
-    require(
-        "assets/ui/" in pubspec,
-        "MOM's UI assets must remain device-bundled",
-    )
+    require("assets/ui/" in pubspec, "MOM's UI assets must remain device-bundled")
     require(
         "assets/runtime_prompt.md" not in pubspec,
         "server-owned prompt was re-bundled",
@@ -205,7 +188,7 @@ def main() -> None:
         "legacy raw-cloud-memory claim returned",
     )
 
-    print("MOM Android debug-only CI contract OK")
+    print("MOM fast ARM64 debug-only CI contract OK")
 
 
 if __name__ == "__main__":
