@@ -76,7 +76,7 @@ Deno.serve(async (req: Request) => {
     return response(200, {
       ok: true,
       service: "mom-sync",
-      version: 6,
+      version: 8,
       raw_memory_location: "device_only",
       raw_chat_storage: false,
       anonymous_research_endpoint: "mom-intelligence",
@@ -166,13 +166,31 @@ Deno.serve(async (req: Request) => {
     }
 
     const sessionId = safeText(body.session_id, 64);
+    let cloudSessionId: string | null = null;
+    if (isUuid(sessionId)) {
+      const { data: cloudSession, error: sessionLookupError } = await db
+        .from("mom_chat_sessions")
+        .select("id")
+        .eq("id", sessionId)
+        .eq("device_id", installation.device_id)
+        .maybeSingle();
+      if (sessionLookupError) {
+        console.error("mom-sync session lookup", sessionLookupError.message);
+      } else if (cloudSession) {
+        cloudSessionId = cloudSession.id;
+      }
+    }
+
     const { error } = await db.from("mom_device_events").insert({
       installation_id: installation.id,
-      session_id: isUuid(sessionId) ? sessionId : null,
+      session_id: cloudSessionId,
       event_type: eventType,
       payload,
     });
-    if (error) return response(500, { error: "event_write_failed" });
+    if (error) {
+      console.error("mom-sync event write", error.message);
+      return response(500, { error: "event_write_failed" });
+    }
     return response(200, { ok: true });
   }
 
