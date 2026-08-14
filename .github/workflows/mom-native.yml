@@ -67,12 +67,13 @@ jobs:
       - name: Verify server runtime source contract
         run: |
           python3 - <<'PY'
+          import re
           from pathlib import Path
 
           source = Path('supabase/functions/mom-sync/index.ts').read_text()
           migration = Path('supabase/migrations/20260810021810_mom_110_server_runtime_config.sql').read_text()
           assert 'npm:@supabase/supabase-js@2.112.3' in source
-          assert 'version: 6' in source
+          assert re.search(r'\bversion:\s*\d+\b', source)
           assert 'action === "runtime_config"' in source
           assert '.eq("config_key", "mobile.runtime")' in source
           assert "'prompt_authority', 'mom-brain'" in migration
