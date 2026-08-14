@@ -48,7 +48,7 @@ class PlasmaOrbView @JvmOverloads constructor(
 
     private val approvedArtwork: Bitmap? by lazy {
         runCatching {
-            context.assets.open(APPROVED_ORB_ASSET).use(BitmapFactory::decodeStream)
+            context.assets.open(APPROVED_ORB_ASSET).use { stream -> BitmapFactory.decodeStream(stream) }
         }.getOrNull()
     }
 
@@ -123,7 +123,8 @@ class PlasmaOrbView @JvmOverloads constructor(
         val radius = side * 0.47f
         val scale = side / 300f
         val seconds = SystemClock.uptimeMillis() / 1000f
-        val pulse = 0.86f + 0.14f * sin(seconds * orbState.pulseSpeed)
+        val pulse = 0.86f + 0.14f *
+            sin((seconds * orbState.pulseSpeed).toDouble()).toFloat()
         val frame = SystemClock.uptimeMillis() / orbState.frameDelayMs
         val random = Random(frame + orbState.ordinal * 10_000L)
 
@@ -137,7 +138,9 @@ class PlasmaOrbView @JvmOverloads constructor(
 
         repeat(orbState.branches) { index ->
             val baseAngle = index * (360f / orbState.branches)
-            val drift = sin(seconds * orbState.pulseSpeed + index * 1.71f) * 8f
+            val drift = sin(
+                (seconds * orbState.pulseSpeed + index * 1.71f).toDouble(),
+            ).toFloat() * 8f
             val targetAngle = baseAngle + drift + random.nextFloat() * 8f
             val angleRad = Math.toRadians(targetAngle.toDouble())
             val targetX = centerX + radius * cos(angleRad).toFloat()
