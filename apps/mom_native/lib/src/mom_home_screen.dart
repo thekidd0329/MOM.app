@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -241,15 +240,15 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                           ),
                           const SizedBox(height: 20),
                           Semantics(
-                            label: 'Animated MOM plasma orb',
+                            label: 'MOM plasma logo',
                             image: true,
                             child: SizedBox.square(
                               dimension: orbSize,
-                              child: Platform.isAndroid
-                                  ? const AndroidView(viewType: 'mom/plasma_orb')
-                                  : const Center(
-                                      child: Text('MOM plasma orb requires Android'),
-                                    ),
+                              child: Image.asset(
+                                'assets/photopea_background_remover_1786650252951.png',
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.high,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 16),
