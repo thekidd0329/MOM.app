@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'local_store.dart';
 import 'mic_status.dart';
+import 'native_plasma_orb.dart';
 
 class MomHomeScreen extends StatefulWidget {
   const MomHomeScreen({
@@ -178,6 +179,22 @@ class _MomHomeScreenState extends State<MomHomeScreen>
     );
   }
 
+  PlasmaOrbState get _orbState {
+    if (widget.listening) return PlasmaOrbState.listening;
+    if (widget.busy) return PlasmaOrbState.thinking;
+
+    final normalized = widget.status.toLowerCase();
+    if (normalized.contains('speak') || normalized.contains('talk')) {
+      return PlasmaOrbState.talking;
+    }
+    if (normalized.contains('error') ||
+        normalized.contains('offline') ||
+        normalized.contains('unavailable')) {
+      return PlasmaOrbState.error;
+    }
+    return PlasmaOrbState.idle;
+  }
+
   String get _statusLabel {
     if (widget.busy) return 'Thinking...';
     if (widget.listening) return 'Listening...';
@@ -244,10 +261,13 @@ class _MomHomeScreenState extends State<MomHomeScreen>
                             image: true,
                             child: SizedBox.square(
                               dimension: orbSize,
-                              child: Image.asset(
-                                'assets/photopea_background_remover_1786650252951.png',
-                                fit: BoxFit.contain,
-                                filterQuality: FilterQuality.high,
+                              child: NativePlasmaOrb(
+                                state: _orbState,
+                                fallback: Image.asset(
+                                  'assets/photopea_background_remover_1786650252951.png',
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
+                                ),
                               ),
                             ),
                           ),
