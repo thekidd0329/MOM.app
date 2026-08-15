@@ -15,6 +15,7 @@ location.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -28,6 +29,19 @@ _REQUIRED_MANIFEST_DECLARATIONS = (
 _REQUIRED_CRISP_NATIVE_LIBRARIES = (
     "libcrispasr.so",
     "libomp.so",
+)
+
+_ROOT = Path(__file__).resolve().parents[1]
+_APPROVED_ORB_SOURCE = (
+    _ROOT
+    / "apps"
+    / "mom_native"
+    / "assets"
+    / "photopea_background_remover_1786650252951.png"
+)
+_APPROVED_ORB_MEMBER = (
+    "assets/flutter_assets/assets/"
+    "photopea_background_remover_1786650252951.png"
 )
 
 
@@ -77,6 +91,11 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
         with ZipFile(apk) as archive:
             packaged = set(archive.namelist())
             bad_member = archive.testzip()
+            packaged_orb = (
+                archive.read(_APPROVED_ORB_MEMBER)
+                if _APPROVED_ORB_MEMBER in packaged
+                else None
+            )
     except BadZipFile as exc:
         raise ValueError(f"invalid APK zip: {apk}") from exc
 
@@ -92,6 +111,20 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
         raise ValueError(
             "APK missing staged native libraries: " + ", ".join(missing)
         )
+
+    if packaged_orb is None:
+        raise ValueError(
+            "APK missing approved MOM orb artwork: " + _APPROVED_ORB_MEMBER
+        )
+    if not _APPROVED_ORB_SOURCE.is_file():
+        raise ValueError(
+            f"approved MOM orb source is missing: {_APPROVED_ORB_SOURCE}"
+        )
+    source_orb = _APPROVED_ORB_SOURCE.read_bytes()
+    packaged_digest = hashlib.sha256(packaged_orb).digest()
+    source_digest = hashlib.sha256(source_orb).digest()
+    if packaged_digest != source_digest:
+        raise ValueError("packaged MOM orb artwork differs from the approved source")
 
     return expected
 
@@ -122,7 +155,7 @@ def main(argv: list[str]) -> int:
     print(
         f"MOM APK verified: {apk} contains all {len(expected)} staged "
         f"{staged_dir.name} native libraries and all {len(declarations)} required "
-        "manifest declarations"
+        "manifest declarations, plus the byte-identical approved orb artwork"
     )
     return 0
 
