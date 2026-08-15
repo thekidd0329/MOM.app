@@ -25,6 +25,11 @@ _REQUIRED_MANIFEST_DECLARATIONS = (
     "android.speech.RecognitionService",
 )
 
+_REQUIRED_CRISP_NATIVE_LIBRARIES = (
+    "libcrispasr.so",
+    "libomp.so",
+)
+
 
 def verify_manifest(manifest: Path) -> tuple[str, ...]:
     if not manifest.is_file() or manifest.stat().st_size == 0:
@@ -53,8 +58,16 @@ def verify(apk: Path, staged_dir: Path) -> list[str]:
     expected = sorted(path.name for path in staged_dir.glob("lib*.so"))
     if not expected:
         raise ValueError(f"no staged native libraries found in: {staged_dir}")
-    if "libcrispasr.so" not in expected:
-        raise ValueError("staged CrispASR library missing before APK verification")
+    missing_crisp_libraries = [
+        library
+        for library in _REQUIRED_CRISP_NATIVE_LIBRARIES
+        if library not in expected
+    ]
+    if missing_crisp_libraries:
+        raise ValueError(
+            "staged CrispASR runtime libraries missing before APK verification: "
+            + ", ".join(missing_crisp_libraries)
+        )
 
     abi = staged_dir.name
     if abi not in {"arm64-v8a", "x86_64"}:

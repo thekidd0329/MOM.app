@@ -59,6 +59,10 @@ def main() -> None:
         "basic ARM64 APK verification is missing",
     )
     require(
+        "libomp.so" in workflow,
+        "CrispASR OpenMP runtime staging is missing",
+    )
+    require(
         "application-debuggable" in workflow,
         "CI must prove the packaged APK is debuggable",
     )
