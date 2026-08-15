@@ -77,7 +77,21 @@ jobs:
           DESTINATION="$BUILD_DIR/android/app/src/main/jniLibs/$ABI"
           mkdir -p "$DESTINATION"
           find "$SOURCE" -type f -name 'lib*.so' -exec cp '{}' "$DESTINATION/" ';'
+
+          # CrispASR enables dynamic OpenMP. Android does not provide libomp,
+          # so package the matching NDK runtime beside the CrispASR libraries.
+          OPENMP_RUNTIME="$(
+            find "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt" \
+              -type f \
+              -path '*/lib/clang/*/lib/linux/aarch64/libomp.so' \
+              -print -quit
+          )"
+          test -n "$OPENMP_RUNTIME"
+          test -f "$OPENMP_RUNTIME"
+          cp "$OPENMP_RUNTIME" "$DESTINATION/libomp.so"
+
           test -f "$DESTINATION/libcrispasr.so"
+          test -f "$DESTINATION/libomp.so"
 
       - name: Resolve dependencies
         working-directory: ${{ runner.temp }}/mom_android

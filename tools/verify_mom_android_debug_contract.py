@@ -9,6 +9,7 @@ UNIFIED = WORKFLOWS / "mom-native.yml"
 PUBSPEC = ROOT / "apps" / "mom_native" / "pubspec.yaml"
 MAIN = ROOT / "apps" / "mom_native" / "lib" / "main.dart"
 ANDROID_PREP = ROOT / "tools" / "ensure_android_manifest.py"
+APK_VERIFY = ROOT / "tools" / "verify_android_apk.py"
 
 OBSOLETE_AUTOMATIC_WORKFLOWS = (
     "mom-android-apk.yml",
@@ -32,6 +33,7 @@ def main() -> None:
     pubspec = PUBSPEC.read_text(encoding="utf-8")
     main_source = MAIN.read_text(encoding="utf-8")
     android_prep = ANDROID_PREP.read_text(encoding="utf-8")
+    apk_verify = APK_VERIFY.read_text(encoding="utf-8")
 
     for filename in OBSOLETE_AUTOMATIC_WORKFLOWS:
         require(
@@ -59,6 +61,10 @@ def main() -> None:
         "basic ARM64 APK verification is missing",
     )
     require(
+        "libomp.so" in workflow,
+        "CrispASR OpenMP runtime staging is missing",
+    )
+    require(
         "application-debuggable" in workflow,
         "CI must prove the packaged APK is debuggable",
     )
@@ -68,6 +74,14 @@ def main() -> None:
     require(
         "ensure_android_manifest.py" in workflow,
         "generated Android workspace hardening is not wired into CI",
+    )
+    require(
+        "_APPROVED_ORB_MEMBER" in apk_verify,
+        "APK verification no longer checks the approved orb asset",
+    )
+    require(
+        "packaged MOM orb artwork differs from the approved source" in apk_verify,
+        "APK verification no longer proves the packaged orb bytes",
     )
 
     slow_or_obsolete = (
