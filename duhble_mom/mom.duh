@@ -1,0 +1,41 @@
+MOM {
+  identity: identity/purpose.duh
+  voice: identity/voice.duh
+
+  interaction {
+    conversation: interaction/conversation.duh
+    input: interaction/input.duh
+    output: interaction/output.duh
+  }
+
+  memory {
+    learning: memory/learning.duh
+    recall: memory/recall.duh
+  }
+
+  behavior {
+    attention: behavior/attention.duh
+    support: behavior/support.duh
+  }
+
+  device {
+    permissions: device/permissions.duh
+    signals: device/signals.duh
+  }
+
+  transport {
+    inference: transport/inference.duh
+    sync: transport/sync.duh
+  }
+
+  law {
+    mounted_state_is_truth
+    activation_is_requested
+    topology_conducts
+    provenance_is_first_class
+    impulse_force_is_first_class
+    inhibition_is_structural
+    time_is_discrete
+    host_holds_no_second_truth
+  }
+}
